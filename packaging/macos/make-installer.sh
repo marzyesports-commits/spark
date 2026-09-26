@@ -5,7 +5,7 @@
 #   APP_SIGN_IDENTITY        e.g. "Developer ID Application: Your Name (TEAMID)"
 #   INSTALLER_SIGN_IDENTITY  e.g. "Developer ID Installer: Your Name (TEAMID)"
 #   NOTARY_APPLE_ID, NOTARY_TEAM_ID, NOTARY_PASSWORD (app-specific password)
-set -euo pipefail
+set -Eeuo pipefail
 trap 'echo "::error file=packaging/macos/make-installer.sh,line=$LINENO::failed: $BASH_COMMAND"' ERR
 
 VERSION="${1:-1.0.0}"
@@ -38,7 +38,7 @@ make_component() {
     local root="$STAGE/root-$id"
     mkdir -p "$root/$dest"
     for b in "$@"; do
-        [[ -e "$b" ]] || { echo "Missing build product: $b" >&2; exit 1; }
+        [[ -e "$b" ]] || { echo "::error::Missing build product: $b"; ls -R "$BUILD_DIR"/*_artefacts | head -50; exit 1; }
         ditto "$b" "$root/$dest/$(basename "$b")"
         sign_bundle "$root/$dest/$(basename "$b")"
     done
