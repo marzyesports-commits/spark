@@ -1,0 +1,7 @@
+build/
+dist/
+test-output/
+.DS_Store
+*.xcodeproj/
+.vscode/
+.idea/

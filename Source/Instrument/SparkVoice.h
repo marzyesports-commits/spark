@@ -1,0 +1,62 @@
+#pragma once
+
+#include "InstrumentProcessor.h"
+#include <array>
+
+namespace spark
+{
+struct SparkSound : public juce::SynthesiserSound
+{
+    bool appliesToNote (int) override { return true; }
+    bool appliesToChannel (int) override { return true; }
+};
+
+// One playing note. Grain mode sprays windowed grains from the source audio;
+// Table mode plays the band-limited wavetable with three detuned oscillators.
+class SparkVoice : public juce::SynthesiserVoice
+{
+public:
+    explicit SparkVoice (InstrumentProcessor&);
+
+    bool canPlaySound (juce::SynthesiserSound*) override { return true; }
+    void startNote (int midiNote, float velocity, juce::SynthesiserSound*, int pitchWheel) override;
+    void stopNote (float velocity, bool allowTailOff) override;
+    void pitchWheelMoved (int value) override;
+    void controllerMoved (int, int) override {}
+    void renderNextBlock (juce::AudioBuffer<float>&, int startSample, int numSamples) override;
+    using juce::SynthesiserVoice::renderNextBlock;
+    void setCurrentPlaybackSampleRate (double) override;
+
+    static constexpr int rootNote = 60; // a source plays at its own pitch on C3/C4 (MIDI 60)
+
+private:
+    struct Grain
+    {
+        bool active = false;
+        double pos = 0.0, rate = 1.0;
+        int age = 0, length = 1;
+        float gainL = 0.7f, gainR = 0.7f;
+    };
+
+    void updateEnvelope();
+    void spawnGrain (const SourceData&, double ratio, float position, float grainSec, float motion, float scan);
+    void renderGrains (float* left, float* right, int n, const SourceData&, double ratio,
+                       float position, float grainSec, float motion, float scan);
+    void renderTable (float* left, float* right, int n, const Wavetable&, double baseHz, float morph, float motion);
+
+    InstrumentProcessor& processor;
+    SourceData::Ptr source;
+    juce::ADSR adsr;
+    juce::Random random;
+
+    std::array<Grain, 40> grains;
+    double samplesToNextGrain = 0.0;
+    double phases[3] {};
+    float lfoPhase = 0.0f;
+    float velocityGain = 1.0f;
+    float bendSemitones = 0.0f;
+    int note = 60;
+
+    juce::AudioBuffer<float> scratch;
+};
+} // namespace spark
