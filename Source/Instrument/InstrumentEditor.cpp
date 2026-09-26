@@ -1,4 +1,5 @@
 #include "InstrumentEditor.h"
+#include "Shapeshift.h"
 
 namespace spark
 {
@@ -8,14 +9,16 @@ SourcePanel::SourcePanel (InstrumentProcessor& p)
       modeAttachment (*p.apvts.getParameter ("mode"), [this] (float v)
       {
           const bool table = v > 0.5f;
-          grainTab.setToggleState (! table, juce::dontSendNotification);
-          tableTab.setToggleState (table, juce::dontSendNotification);
+          const int m = juce::roundToInt (v);
+          grainTab.setToggleState (m == 0, juce::dontSendNotification);
+          tableTab.setToggleState (m == 1, juce::dontSendNotification);
+          sampleTab.setToggleState (m == 2, juce::dontSendNotification);
           repaint();
       })
 {
-    for (auto* b : { &grainTab, &tableTab, &importButton, &makeTableButton, &exportButton })
+    for (auto* b : { &grainTab, &tableTab, &sampleTab, &importButton, &shapeshiftButton, &exportButton })
         addAndMakeVisible (b);
-    for (auto* b : { &grainTab, &tableTab })
+    for (auto* b : { &grainTab, &tableTab, &sampleTab })
     {
         b->setFontHeight (10.0f);
         b->setLetterSpacing (0.14f);
@@ -23,13 +26,15 @@ SourcePanel::SourcePanel (InstrumentProcessor& p)
     grainTab.setTooltip ("Grain: play the sound as a cloud of tiny slices");
     tableTab.setTooltip ("Table: play the wavetable made from the sound");
     importButton.setTooltip ("Load a sample or wavetable (you can also drag one onto Spark)");
-    makeTableButton.setTooltip ("Slice the current sound into a 64-frame wavetable");
+    sampleTab.setTooltip ("Sample: play the recording itself (after Shapeshift, this is the original to compare with)");
+    shapeshiftButton.setTooltip ("Shapeshift: rebuild a note bounced from Serum, Serum 2, Vital or any synth, then reshape it");
     exportButton.setTooltip ("Save the wavetable, with Drive and Tone baked in, for Serum or Vital");
 
     grainTab.onClick = [this] { modeAttachment.setValueAsCompleteGesture (0.0f); };
     tableTab.onClick = [this] { modeAttachment.setValueAsCompleteGesture (1.0f); };
+    sampleTab.onClick = [this] { modeAttachment.setValueAsCompleteGesture (2.0f); };
     importButton.onClick = [this] { if (onImport) onImport(); };
-    makeTableButton.onClick = [this] { if (onMakeTable) onMakeTable(); };
+    shapeshiftButton.onClick = [this] { if (onShapeshift) onShapeshift(); };
     exportButton.onClick = [this] { if (onExport) onExport(); };
 
     modeAttachment.sendInitialUpdate();
@@ -41,11 +46,12 @@ SourcePanel::~SourcePanel() { processor.removeChangeListener (this); }
 
 void SourcePanel::resized()
 {
-    tableTab.setBounds (getWidth() - 16 - 2 - 62, 16, 62, 26);
-    grainTab.setBounds (tableTab.getX() - 64, 16, 64, 26);
+    sampleTab.setBounds (getWidth() - 16 - 2 - 64, 16, 64, 26);
+    tableTab.setBounds (sampleTab.getX() - 56, 16, 56, 26);
+    grainTab.setBounds (tableTab.getX() - 58, 16, 58, 26);
     const int w = (getWidth() - 32 - 12) / 3;
     importButton.setBounds (16, 204, w, 32);
-    makeTableButton.setBounds (16 + w + 6, 204, w, 32);
+    shapeshiftButton.setBounds (16 + w + 6, 204, w, 32);
     exportButton.setBounds (16 + 2 * (w + 6), 204, w, 32);
 }
 
@@ -56,7 +62,7 @@ void SourcePanel::paint (juce::Graphics& g)
     drawSectionLabel (g, "SOURCE", { 16.0f, 16.0f, 100.0f, 26.0f });
 
     // segmented control frame
-    auto seg = grainTab.getBounds().getUnion (tableTab.getBounds()).toFloat().expanded (2.0f);
+    auto seg = grainTab.getBounds().getUnion (sampleTab.getBounds()).toFloat().expanded (2.0f);
     g.setColour (line2);
     g.drawRoundedRectangle (seg, seg.getHeight() * 0.5f, 1.0f);
 
@@ -132,17 +138,21 @@ void SourcePanel::paint (juce::Graphics& g)
 
         g.setColour (text);
         g.setFont (fonts::body (12.0f));
-        g.drawText (s->name, info.reduced (10.0f, 0.0f).withTrimmedRight (50.0f), juce::Justification::centredLeft, true);
-        g.setColour (muted);
-        g.setFont (fonts::mono (10.0f));
+        g.drawText (s->name, info.reduced (10.0f, 0.0f).withTrimmedRight (96.0f), juce::Justification::centredLeft, true);
         const auto secs = s->audio.getNumSamples() / s->sampleRate;
-        g.drawText (s->loadedAsWavetable ? juce::String (s->table->getNumFrames()) + " fr" : juce::String (secs, 2) + " s",
-                    info.reduced (10.0f, 0.0f), juce::Justification::centredRight, false);
+        juce::String right = s->loadedAsWavetable ? juce::String (s->table->getNumFrames()) + " fr"
+                                                  : shapeshift::noteName (s->rootNote) + juce::String::fromUTF8 (" \xc2\xb7 ") + juce::String (secs, 1) + " s";
+        g.setColour (s->shapeshifted ? gold : muted);
+        g.setFont (fonts::mono (10.0f));
+        g.drawText (right, info.reduced (10.0f, 0.0f), juce::Justification::centredRight, false);
     }
 
     g.setColour (muted);
     g.setFont (fonts::body (12.0f));
-    g.drawText ("Drop audio or a wavetable (WAV, AIFF, FLAC)", juce::Rectangle<float> (16.0f, 170.0f, (float) getWidth() - 32.0f, 22.0f),
+    auto src = processor.getSource();
+    g.drawText (src != nullptr && src->shapeshifted ? "Shapeshifted: TABLE is the rebuild, SAMPLE the original"
+                                                    : "Drop a sound, or Shapeshift a synth note",
+                juce::Rectangle<float> (16.0f, 170.0f, (float) getWidth() - 32.0f, 22.0f),
                 juce::Justification::centredLeft, false);
 }
 
@@ -613,7 +623,7 @@ bool ShapeEditor::keyPressed (const juce::KeyPress& k)
 
 // =====================================================================================
 InstrumentEditor::InstrumentEditor (InstrumentProcessor& p)
-    : SparkEditorBase (p, false), processor (p), source (p), shape (p), shapeEditor (p)
+    : SparkEditorBase (p, false), processor (p), source (p), shape (p), shapeEditor (p), fxPage (p)
 {
     auto col = leftColumn();
     source.setBounds (col.removeFromTop (252));
@@ -621,6 +631,10 @@ InstrumentEditor::InstrumentEditor (InstrumentProcessor& p)
     shape.setBounds (col);
     content().addAndMakeVisible (source);
     content().addAndMakeVisible (shape);
+
+    content().addChildComponent (fxPage);
+    fxPage.setBounds (24, 86, 1072, 440);
+    getHeader().onPage = [this] (int page) { showPage (page); };
 
     content().addChildComponent (shapeEditor);
     shapeEditor.setBounds (24, 86, 1072, 440);
@@ -634,7 +648,7 @@ InstrumentEditor::InstrumentEditor (InstrumentProcessor& p)
     };
 
     source.onImport = [this] { chooseFileToImport(); };
-    source.onMakeTable = [this] { processor.makeTableFromSample(); };
+    source.onShapeshift = [this] { startShapeshift(); };
     source.onExport = [this] { exportWavetable(); };
 }
 
@@ -705,8 +719,71 @@ void InstrumentEditor::exportWavetable()
                           });
 }
 
+void InstrumentEditor::hideOtherOverlays()
+{
+    shapeEditor.setVisible (false);
+    fxPage.setVisible (false);
+    getHeader().setPage (0);
+}
+
+void InstrumentEditor::showPage (int page)
+{
+    setBrowserVisible (false);
+    shapeEditor.setVisible (false);
+    fxPage.setVisible (page == 1);
+    if (page == 1) fxPage.toFront (false);
+    getHeader().setPage (page);
+}
+
+void InstrumentEditor::startShapeshift()
+{
+    auto current = processor.getSource();
+    const bool haveSound = current != nullptr && current->name != "Spark Init";
+    if (! haveSound)
+    {
+        chooser = std::make_unique<juce::FileChooser> ("Shapeshift: choose one note bounced from Serum, Serum 2, Vital or any synth",
+                                                       juce::File::getSpecialLocation (juce::File::userMusicDirectory),
+                                                       processor.getSupportedExtensions());
+        chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                              [this] (const juce::FileChooser& fc) { if (auto f = fc.getResult(); f.existsAsFile()) runShapeshift (f); });
+        return;
+    }
+
+    juce::PopupMenu m;
+    m.setLookAndFeel (&getSparkLookAndFeel());
+    m.addItem ("Shapeshift \"" + current->name + "\"", [this] { runShapeshift ({}); });
+    m.addItem ("Shapeshift another note...", [this]
+    {
+        chooser = std::make_unique<juce::FileChooser> ("Shapeshift: choose one note bounced from Serum, Serum 2, Vital or any synth",
+                                                       juce::File::getSpecialLocation (juce::File::userMusicDirectory),
+                                                       processor.getSupportedExtensions());
+        chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                              [this] (const juce::FileChooser& fc) { if (auto f = fc.getResult(); f.existsAsFile()) runShapeshift (f); });
+    });
+    m.addSeparator();
+    m.addItem ("How to bounce a note for Shapeshift", [this]
+    {
+        showMessage ("Shapeshift", "In Serum, Serum 2 or Vital, play and hold one note for about two seconds, then let go and let the tail ring out. "
+                                   "Export or bounce that as a WAV and give it to Shapeshift.\n\n"
+                                   "Spark finds the note, turns the way the timbre changes into a wavetable it plays through, and matches the envelope and width. "
+                                   "Then shape it however you like with the facets, the Shape editor, the effects and Spark.");
+    });
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this).withMousePosition());
+}
+
+void InstrumentEditor::runShapeshift (const juce::File& file)
+{
+    juce::String summary;
+    if (processor.shapeshift (file, summary))
+        showMessage ("Shapeshifted", summary + "\n\nCompare: TABLE is the rebuild, SAMPLE plays the original. "
+                                               "Everything is now yours to reshape: facets, Shape, effects, Spark and Breed.");
+    else
+        showMessage ("Couldn't Shapeshift that", summary);
+}
+
 void InstrumentEditor::addExtraMenuItems (juce::PopupMenu& m)
 {
+    m.addItem ("Shapeshift...", [this] { startShapeshift(); });
     m.addItem ("Shape editor...", [this] { setBrowserVisible (false); shapeEditor.setVisible (true); shapeEditor.toFront (true); });
     m.addItem ("Load sample or wavetable...", [this] { chooseFileToImport(); });
     m.addItem ("Make wavetable from sample", [this] { processor.makeTableFromSample(); });

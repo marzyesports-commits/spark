@@ -12,10 +12,11 @@ const LineageNode* Lineage::previousNode() const noexcept
     return juce::isPositiveAndBelow (current - 1, (int) list.size()) ? &list[(size_t) current - 1] : nullptr;
 }
 
-const LineageNode& Lineage::push (const FacetValues& vals, juce::uint32 seed)
+const LineageNode& Lineage::push (const FacetValues& vals, juce::uint32 seed, std::map<juce::String, float> extras)
 {
     LineageNode n;
     n.vals = vals;
+    n.extras = std::move (extras);
     n.seed = seed;
     n.gen = nextGen++;
     list.push_back (n);
@@ -43,10 +44,38 @@ void Lineage::toggleKeep (int index)
         list[(size_t) index].kept = ! list[(size_t) index].kept;
 }
 
-void Lineage::updateValues (int index, const FacetValues& vals)
+void Lineage::updateValues (int index, const FacetValues& vals, const std::map<juce::String, float>& extras)
 {
     if (juce::isPositiveAndBelow (index, (int) list.size()))
+    {
         list[(size_t) index].vals = vals;
+        list[(size_t) index].extras = extras;
+    }
+}
+
+std::map<juce::String, float> Lineage::rollExtras (const std::map<juce::String, float>& from, juce::uint32 seed, float mutate, float chaos)
+{
+    juce::Random r ((juce::int64) seed * 69069LL + 5);
+    const float amount = 0.06f + 0.45f * chaos;
+    const float probability = 0.25f + 0.6f * mutate;
+    auto out = from;
+    for (auto& [id, v] : out)
+    {
+        const float a = r.nextFloat(), b = r.nextFloat() * 2.0f - 1.0f;
+        if (a < probability)
+            v = juce::jlimit (0.0f, 1.0f, v + b * amount);
+    }
+    return out;
+}
+
+std::map<juce::String, float> Lineage::breedExtras (const std::map<juce::String, float>& a, const std::map<juce::String, float>& b, juce::uint32 seed)
+{
+    juce::Random r ((juce::int64) seed * 7919LL + 3);
+    auto out = a;
+    for (auto& [id, v] : out)
+        if (auto it = b.find (id); it != b.end() && r.nextBool())
+            v = it->second;
+    return out;
 }
 
 void Lineage::clear()
@@ -126,6 +155,12 @@ juce::ValueTree Lineage::toValueTree() const
         c.setProperty ("seed", (juce::int64) n.seed, nullptr);
         c.setProperty ("kept", n.kept, nullptr);
         c.setProperty ("gen", n.gen, nullptr);
+        if (! n.extras.empty())
+        {
+            juce::StringArray e;
+            for (const auto& [id, v] : n.extras) e.add (id + "=" + juce::String (v, 5));
+            c.setProperty ("extras", e.joinIntoString (";"), nullptr);
+        }
         t.appendChild (c, nullptr);
     }
     return t;
@@ -146,6 +181,9 @@ void Lineage::fromValueTree (const juce::ValueTree& t)
         n.seed = (juce::uint32) (juce::int64) c.getProperty ("seed");
         n.kept = (bool) c.getProperty ("kept");
         n.gen = (int) c.getProperty ("gen", 1);
+        for (const auto& kv : juce::StringArray::fromTokens (c.getProperty ("extras").toString(), ";", ""))
+            if (kv.contains ("="))
+                n.extras[kv.upToFirstOccurrenceOf ("=", false, false)] = juce::jlimit (0.0f, 1.0f, kv.fromFirstOccurrenceOf ("=", false, false).getFloatValue());
         loaded.push_back (n);
     }
     if (loaded.empty())

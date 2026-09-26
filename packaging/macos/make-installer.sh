@@ -19,7 +19,6 @@ trap 'rm -rf "$STAGE"' EXIT
 mkdir -p "$OUT_DIR" "$STAGE/pkgs" "$STAGE/resources"
 
 I="$BUILD_DIR/Spark_artefacts/$CONFIG"
-F="$BUILD_DIR/SparkFX_artefacts/$CONFIG"
 
 sign_bundle() {
     local bundle="$1"
@@ -56,9 +55,9 @@ make_component() {
              --install-location / "$STAGE/pkgs/$id.pkg"
 }
 
-make_component vst3 "Library/Audio/Plug-Ins/VST3" "$I/VST3/Spark.vst3" "$F/VST3/Spark FX.vst3"
-make_component au   "Library/Audio/Plug-Ins/Components" "$I/AU/Spark.component" "$F/AU/Spark FX.component"
-make_component apps "Applications" "$I/Standalone/Spark.app" "$F/Standalone/Spark FX.app"
+make_component vst3 "Library/Audio/Plug-Ins/VST3" "$I/VST3/Spark.vst3"
+make_component au   "Library/Audio/Plug-Ins/Components" "$I/AU/Spark.component"
+make_component apps "Applications" "$I/Standalone/Spark.app"
 
 sed "s/@VERSION@/$VERSION/g" "$HERE/welcome.html" > "$STAGE/resources/welcome.html"
 cp "$HERE/conclusion.html" "$STAGE/resources/conclusion.html"

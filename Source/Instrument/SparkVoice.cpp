@@ -66,6 +66,8 @@ void SparkVoice::startNote (int midiNote, float vel, juce::SynthesiserSound*, in
 
     for (auto& g : grains) g.active = false;
     samplesToNextGrain = 0.0;
+    samplePos = 0.0;
+    noteSamples = 0.0;
     // Unison oscillators start together so every note has the same level and punch;
     // the detune then drifts them apart naturally.
     const double startPhase = random.nextDouble();
@@ -201,10 +203,34 @@ void SparkVoice::renderGrains (float* left, float* right, int n, const SourceDat
     }
 }
 
-void SparkVoice::renderTable (float* left, float* right, int n, const Wavetable& table, double baseHz, float morph, float motion)
+void SparkVoice::renderSample (float* left, float* right, int n, const SourceData& src, double ratio)
+{
+    // Straight playback of the recording from the start, pitched from its root note.
+    const int len = src.audio.getNumSamples();
+    const float* chL = src.audio.getReadPointer (0);
+    const float* chR = src.audio.getReadPointer (src.audio.getNumChannels() > 1 ? 1 : 0);
+    for (int i = 0; i < n; ++i)
+    {
+        if (samplePos >= len - 1)
+        {
+            left[i] = right[i] = 0.0f;
+            continue;
+        }
+        const int i0 = (int) samplePos;
+        const float fr = (float) (samplePos - i0);
+        left[i] = (chL[i0] + (chL[i0 + 1] - chL[i0]) * fr) * 0.8f;
+        right[i] = (chR[i0] + (chR[i0 + 1] - chR[i0]) * fr) * 0.8f;
+        samplePos += ratio;
+    }
+}
+
+void SparkVoice::renderTable (float* left, float* right, int n, const Wavetable& table, double baseHz, float morph, float motion, float scanSeconds)
 {
     const double sr = getSampleRate();
-    const float detuneCents = (0.15f + motion) * 9.0f;
+    // Unison as stereo width: the centre oscillator carries the sound (full and bright in mono),
+    // the detuned pair only adds side signal, so nothing cancels when summed to mono.
+    const float detuneCents = motion * 12.0f;
+    const float sideAmount = juce::jmin (1.0f, motion * 2.5f) * 0.5f;
     const double ratios[3] = { 1.0, std::pow (2.0, detuneCents / 1200.0), std::pow (2.0, -detuneCents / 1200.0) };
     const float lastFrame = (float) (table.getNumFrames() - 1);
     const float lfoInc = (0.1f + motion * 0.9f) * juce::MathConstants<float>::twoPi / (float) sr;
@@ -215,7 +241,10 @@ void SparkVoice::renderTable (float* left, float* right, int n, const Wavetable&
 
     for (int i = 0; i < n; ++i)
     {
-        const float m = juce::jlimit (0.0f, 1.0f, morph + std::sin (lfoPhase) * motion * 0.35f);
+        // Morph scan sweeps from Morph to the last frame over scanSeconds (Shapeshift uses this to replay a sound's evolution)
+        const float scanned = scanSeconds > 0.0f ? morph + (1.0f - morph) * (float) juce::jmin (1.0, noteSamples / (scanSeconds * sr)) : morph;
+        noteSamples += 1.0;
+        const float m = juce::jlimit (0.0f, 1.0f, scanned + std::sin (lfoPhase) * motion * (scanSeconds > 0.0f ? 0.05f : 0.35f));
         const float framePos = m * lastFrame;
         lfoPhase += lfoInc;
         if (lfoPhase > juce::MathConstants<float>::twoPi) lfoPhase -= juce::MathConstants<float>::twoPi;
@@ -227,8 +256,9 @@ void SparkVoice::renderTable (float* left, float* right, int n, const Wavetable&
             phases[k] += baseHz * ratios[k] / sr;
             phases[k] -= std::floor (phases[k]);
         }
-        left[i] = (s[0] * 0.55f + s[1] * 0.45f) * 0.6f;
-        right[i] = (s[0] * 0.55f + s[2] * 0.45f) * 0.6f;
+        const float side = (s[1] - s[2]) * sideAmount;
+        left[i] = (s[0] + side) * 0.6f;
+        right[i] = (s[0] - side) * 0.6f;
     }
 }
 
@@ -244,9 +274,12 @@ void SparkVoice::renderNextBlock (juce::AudioBuffer<float>& out, int startSample
     const float grainSec = fmt::grainSeconds (p.facet[InstrumentProcessor::grain]->load());
     const float morph = p.facet[InstrumentProcessor::morph]->load();
     const float motion = p.facet[InstrumentProcessor::motion]->load();
-    const bool tableMode = juce::roundToInt (p.mode->load()) == InstrumentProcessor::tableMode;
+    const int mode = juce::roundToInt (p.mode->load());
+    const bool tableMode = mode == InstrumentProcessor::tableMode;
+    const bool sampleMode = mode == InstrumentProcessor::sampleMode;
+    const float scanSeconds = p.scanTime->load() > 0.001f ? fmt::envSeconds (p.scanTime->load()) * 2.0f : 0.0f;
 
-    const float semis = (float) (note - rootNote) + pitchSt + bendSemitones;
+    const float semis = (float) note - source->rootNote + pitchSt + bendSemitones;
     const double ratio = std::pow (2.0, semis / 12.0) * (source->sampleRate / getSampleRate());
     const double baseHz = 440.0 * std::pow (2.0, ((double) note - 69.0 + pitchSt + bendSemitones) / 12.0);
 
@@ -256,9 +289,13 @@ void SparkVoice::renderNextBlock (juce::AudioBuffer<float>& out, int startSample
         float* l = scratch.getWritePointer (0);
         float* r = scratch.getWritePointer (1);
 
-        if (tableMode && source->table != nullptr)
+        if (sampleMode)
         {
-            renderTable (l, r, n, *source->table, baseHz, morph, motion);
+            renderSample (l, r, n, *source, ratio);
+        }
+        else if (tableMode && source->table != nullptr)
+        {
+            renderTable (l, r, n, *source->table, baseHz, morph, motion, scanSeconds);
         }
         else
         {

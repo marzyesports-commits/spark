@@ -137,12 +137,29 @@ int SparkProcessorBase::numLocked() const noexcept
     return (int) std::count (locks.begin(), locks.end(), true);
 }
 
+std::map<juce::String, float> SparkProcessorBase::currentExtraValues() const
+{
+    std::map<juce::String, float> m;
+    for (auto* p : getRandomisableExtras())
+        m[p->getParameterID()] = p->getValue();
+    return m;
+}
+
+void SparkProcessorBase::applyExtraValues (const std::map<juce::String, float>& extras)
+{
+    for (const auto& [id, v] : extras)
+        if (auto* p = apvts.getParameter (id); p != nullptr && std::abs (p->getValue() - v) > 1.0e-5f)
+            setParam (id, v);
+}
+
 void SparkProcessorBase::spark()
 {
     const auto seed = (juce::uint32) random.nextInt();
     const auto vals = Lineage::roll (currentFacetValues(), seed, mutate->getValue(), chaos->getValue(), locks);
-    lineage.push (vals, seed);
+    const auto extras = Lineage::rollExtras (currentExtraValues(), seed, mutate->getValue(), chaos->getValue());
+    lineage.push (vals, seed, extras);
     applyFacetValues (vals);
+    applyExtraValues (extras);
     sendChangeMessage();
 }
 
@@ -150,10 +167,13 @@ void SparkProcessorBase::breed()
 {
     const auto* partner = lineage.breedPartner();
     const auto current = currentFacetValues();
+    const auto currentExtras = currentExtraValues();
     const auto seed = (juce::uint32) random.nextInt();
     const auto vals = Lineage::breed (current, partner != nullptr ? partner->vals : current, seed, locks);
-    lineage.push (vals, seed);
+    const auto extras = Lineage::breedExtras (currentExtras, partner != nullptr ? partner->extras : currentExtras, seed);
+    lineage.push (vals, seed, extras);
     applyFacetValues (vals);
+    applyExtraValues (extras);
     sendChangeMessage();
 }
 
@@ -168,6 +188,12 @@ void SparkProcessorBase::recall (int index)
         for (int i = 0; i < numFacets; ++i)
             if (locks[(size_t) i]) v[(size_t) i] = now[(size_t) i];
         applyFacetValues (v);
+        // Only restore effect settings that are still unlocked and in use.
+        const auto allowed = currentExtraValues();
+        std::map<juce::String, float> e;
+        for (const auto& [id, val] : n->extras)
+            if (allowed.count (id) > 0) e[id] = val;
+        applyExtraValues (e);
     }
     sendChangeMessage();
 }
@@ -176,7 +202,7 @@ void SparkProcessorBase::toggleKeepCurrent()
 {
     const int i = lineage.currentIndex();
     if (auto* n = lineage.currentNode(); n != nullptr && ! n->kept)
-        lineage.updateValues (i, currentFacetValues()); // keep what you are actually hearing
+        lineage.updateValues (i, currentFacetValues(), currentExtraValues()); // keep what you are actually hearing
     lineage.toggleKeep (i);
     sendChangeMessage();
 }
@@ -257,7 +283,7 @@ void SparkProcessorBase::loadPreset (int index)
         if (locks[(size_t) i]) v[(size_t) i] = now[(size_t) i];
 
     applyFacetValues (v);
-    lineage.push (v, (juce::uint32) juce::DefaultHashFunctions::generateHash (p.category + p.name, 1 << 30));
+    lineage.push (v, (juce::uint32) juce::DefaultHashFunctions::generateHash (p.category + p.name, 1 << 30), currentExtraValues());
     sendChangeMessage();
 }
 

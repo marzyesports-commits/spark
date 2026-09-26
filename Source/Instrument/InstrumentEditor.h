@@ -2,6 +2,7 @@
 
 #include "Common/Components.h"
 #include "InstrumentProcessor.h"
+#include "FxPage.h"
 
 namespace spark
 {
@@ -14,7 +15,7 @@ public:
     explicit SourcePanel (InstrumentProcessor&);
     ~SourcePanel() override;
 
-    std::function<void()> onImport, onMakeTable, onExport;
+    std::function<void()> onImport, onShapeshift, onExport;
     void setDragHover (bool h) { dragHover = h; repaint(); }
 
     void paint (juce::Graphics&) override;
@@ -27,7 +28,8 @@ private:
     InstrumentProcessor& processor;
     PillButton grainTab { "GRAIN", PillButton::Style::segment };
     PillButton tableTab { "TABLE", PillButton::Style::segment };
-    PillButton importButton { "Import" }, makeTableButton { "Make table" };
+    PillButton sampleTab { "SAMPLE", PillButton::Style::segment };
+    PillButton importButton { "Import" }, shapeshiftButton { "Shapeshift", PillButton::Style::goldSolid };
     PillButton exportButton { "Export", PillButton::Style::goldOutline };
     juce::ParameterAttachment modeAttachment;
     bool dragHover = false;
@@ -133,19 +135,25 @@ public:
     void fileDragExit (const juce::StringArray&) override { source.setDragHover (false); }
     void filesDropped (const juce::StringArray&, int, int) override;
 
+    // 0 = Sound, 1 = FX
+    void showPage (int page);
+
 protected:
     void addExtraMenuItems (juce::PopupMenu&) override;
-    void hideOtherOverlays() override { shapeEditor.setVisible (false); }
+    void hideOtherOverlays() override;
 
 private:
     void loadFile (const juce::File&);
     void chooseFileToImport();
     void exportWavetable();
+    void startShapeshift();
+    void runShapeshift (const juce::File&);
 
     InstrumentProcessor& processor;
     SourcePanel source;
     ShapePanel shape;
     ShapeEditor shapeEditor;
+    FxPage fxPage;
     std::unique_ptr<juce::FileChooser> chooser;
 };
 } // namespace spark

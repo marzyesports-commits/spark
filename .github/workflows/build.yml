@@ -11,7 +11,7 @@ permissions:
   contents: write   # lets successful main builds publish a GitHub Release
 
 env:
-  VERSION: 1.2.0
+  VERSION: 1.3.0
 
 jobs:
   macos:
@@ -64,9 +64,9 @@ jobs:
 
       - name: Build
         run: |
-          cmake --build build --config Release --target Spark_All SparkFX_All SparkTests -- -quiet -jobs 3
+          cmake --build build --config Release --target Spark_All SparkTests -- -quiet -jobs 3
           lipo -info "build/Spark_artefacts/Release/VST3/Spark.vst3/Contents/MacOS/Spark"
-          lipo -info "build/SparkFX_artefacts/Release/AU/Spark FX.component/Contents/MacOS/Spark FX"
+          lipo -info "build/Spark_artefacts/Release/AU/Spark.component/Contents/MacOS/Spark"
 
       - name: Package installer
         env:
@@ -90,18 +90,17 @@ jobs:
       - name: Validate Audio Units (auval)
         run: |
           mkdir -p ~/Library/Audio/Plug-Ins/Components
-          cp -R "build/Spark_artefacts/Release/AU/Spark.component" "build/SparkFX_artefacts/Release/AU/Spark FX.component" ~/Library/Audio/Plug-Ins/Components/
+          cp -R "build/Spark_artefacts/Release/AU/Spark.component" ~/Library/Audio/Plug-Ins/Components/
           killall -9 AudioComponentRegistrar || true
           sleep 2
           auval -a | grep -i spark || true
           auval -v aumu Spk1 Sprk
-          auval -v aufx Spk2 Sprk
 
       - name: Validate VST3 (pluginval)
         run: |
           curl -sSfL -o pluginval.zip https://github.com/Tracktion/pluginval/releases/latest/download/pluginval_macOS.zip
           unzip -q pluginval.zip
-          for p in "build/Spark_artefacts/Release/VST3/Spark.vst3" "build/SparkFX_artefacts/Release/VST3/Spark FX.vst3"; do
+          for p in "build/Spark_artefacts/Release/VST3/Spark.vst3"; do
             ./pluginval.app/Contents/MacOS/pluginval --strictness-level 8 --validate-in-process --timeout-ms 300000 "$p"
           done
 
@@ -136,7 +135,7 @@ jobs:
         run: cmake -B build -G "Visual Studio 17 2022" -A x64 -DSPARK_BUILD_TESTS=ON
 
       - name: Build
-        run: cmake --build build --config Release --target Spark_VST3 Spark_Standalone SparkFX_VST3 SparkFX_Standalone SparkTests --parallel 4
+        run: cmake --build build --config Release --target Spark_VST3 Spark_Standalone SparkTests --parallel 4
 
       - name: Package installer
         shell: pwsh
@@ -155,8 +154,8 @@ jobs:
           $zip = "dist\Spark-$env:VERSION-Windows-plugins"
           try {
             New-Item -ItemType Directory -Force "$zip\VST3", "$zip\Apps" | Out-Null
-            Copy-Item -Recurse -Force "build\Spark_artefacts\Release\VST3\Spark.vst3", "build\SparkFX_artefacts\Release\VST3\Spark FX.vst3" "$zip\VST3"
-            Copy-Item -Force "build\Spark_artefacts\Release\Standalone\Spark.exe", "build\SparkFX_artefacts\Release\Standalone\Spark FX.exe" "$zip\Apps"
+            Copy-Item -Recurse -Force "build\Spark_artefacts\Release\VST3\Spark.vst3" "$zip\VST3"
+            Copy-Item -Force "build\Spark_artefacts\Release\Standalone\Spark.exe" "$zip\Apps"
             Push-Location dist
             & 7z a -tzip "Spark-$env:VERSION-Windows-plugins.zip" "Spark-$env:VERSION-Windows-plugins" | Out-Null
             Pop-Location
@@ -179,7 +178,7 @@ jobs:
         run: |
           curl -sSfL -o pluginval.zip https://github.com/Tracktion/pluginval/releases/latest/download/pluginval_Windows.zip
           unzip -q pluginval.zip
-          for p in "build/Spark_artefacts/Release/VST3/Spark.vst3" "build/SparkFX_artefacts/Release/VST3/Spark FX.vst3"; do
+          for p in "build/Spark_artefacts/Release/VST3/Spark.vst3"; do
             ./pluginval.exe --strictness-level 8 --validate-in-process --timeout-ms 300000 "$p"
           done
 
@@ -214,7 +213,7 @@ jobs:
           target_commitish: ${{ github.sha }}
           make_latest: true
           body: |
-            **Spark** (instrument) and **Spark FX** (effect).
+            **Spark**: a MIDI instrument with Shapeshift (rebuild a synth note from audio) and a built-in 7-effect rack. The separate Spark FX plugin is retired; its effects now live on Spark's FX page.
 
             **Mac** (macOS 11+, Apple Silicon and Intel): download **Spark-${{ env.VERSION }}-macOS.pkg**. It isn't signed with an Apple Developer ID yet, so right-click it, choose **Open**, then **Open** again.
 

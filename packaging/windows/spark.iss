@@ -1,5 +1,5 @@
 ; Inno Setup script for Spark on Windows. Build with:
-;   ISCC.exe /DAppVersion=1.2.0 packaging\windows\spark.iss
+;   ISCC.exe /DAppVersion=1.3.0 packaging\windows\spark.iss
 #ifndef AppVersion
   #define AppVersion "1.0.0"
 #endif
@@ -34,13 +34,10 @@ Name: "apps"; Description: "Standalone apps"; Types: full custom
 
 [Files]
 Source: "{#Root}\build\Spark_artefacts\Release\VST3\Spark.vst3\*"; DestDir: "{commoncf64}\VST3\Spark.vst3"; Components: vst3; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: "{#Root}\build\SparkFX_artefacts\Release\VST3\Spark FX.vst3\*"; DestDir: "{commoncf64}\VST3\Spark FX.vst3"; Components: vst3; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#Root}\build\Spark_artefacts\Release\Standalone\Spark.exe"; DestDir: "{app}"; Components: apps; Flags: ignoreversion
-Source: "{#Root}\build\SparkFX_artefacts\Release\Standalone\Spark FX.exe"; DestDir: "{app}"; Components: apps; Flags: ignoreversion
 
 [Icons]
 Name: "{autoprograms}\Spark"; Filename: "{app}\Spark.exe"; Components: apps
-Name: "{autoprograms}\Spark FX"; Filename: "{app}\Spark FX.exe"; Components: apps
 
 [Messages]
 FinishedLabel=Spark is installed.%n%nIn your DAW, rescan plug-ins (in Ableton Live: Settings > Plug-Ins > turn on "Use VST3 Plug-in System Folders" > Rescan). Spark appears under Spark Audio.

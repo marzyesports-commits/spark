@@ -107,6 +107,11 @@ public:
     bool saveUserPreset (const juce::String& name, juce::String& error);
     bool deleteUserPreset (int index);
 
+    // ---- other parameters Spark and Breed may move (e.g. enabled effects), and their current values
+    virtual std::vector<juce::RangedAudioParameter*> getRandomisableExtras() const { return {}; }
+    std::map<juce::String, float> currentExtraValues() const;
+    void applyExtraValues (const std::map<juce::String, float>&);
+
     // ---- visuals: 'n' values in -1..1 describing the current sound as a ring
     virtual void getCoreShape (std::vector<float>& out, int n) = 0;
 

@@ -1,28 +1,20 @@
 # ✦ Spark
 
-Spark is a sound-mutation instrument and effect. Drop in any sound, play it from MIDI as a cloud of grains or as a wavetable, then hit **SPARK** to roll new variations. Keep the ones you love and breed them together.
-
-It comes as two plugins built from one codebase:
-
-| Plugin | Type | What it does |
-|---|---|---|
-| **Spark** | Instrument (MIDI in) | Plays a dropped sample as grains or as a wavetable sliced from it |
-| **Spark FX** | Audio effect | Live granular resynthesis of a track, with tempo-synced stutter |
+Spark is a sound-mutation instrument. Drop in any sound, play it from MIDI as a cloud of grains, as a wavetable or as the sample itself, then hit **SPARK** to roll new variations. Keep the ones you love and breed them together. **Shapeshift** rebuilds a synth note you bounced from Serum, Serum 2 or Vital, and the **FX** page holds a full effects rack.
 
 Formats: **VST3**, **Audio Unit** and **standalone app** on macOS (universal: Apple Silicon and Intel, macOS 11+), and **VST3** and **standalone app** on Windows 10/11 (64-bit).
 
 ## Presets
 
-Spark ships with **103 instrument presets** and **75 effect presets**, sorted into categories. Each preset notes what kind of sample it suits. Click the preset name at the top to open the browser. There you can pick a category, search by name or by sample type (try "808", "vocal" or "breaks"), use the arrow keys to audition, or press **Surprise me** for a random preset.
+Spark ships with **103 presets**, sorted into categories. Each preset notes what kind of sample it suits. Click the preset name at the top to open the browser. There you can pick a category, search by name or by sample type (try "808", "vocal" or "breaks"), use the arrow keys to audition, or press **Surprise me** for a random preset.
 
-| Spark (instrument) | Spark FX (effect) |
-|---|---|
-| Starters · **Bass** (808s, subs, reese, growls) · **Pads** · Keys & Plucks · Leads · **Vocal Chops** · Textures · **Drums & Perc** · FX & Risers · Wavetable | Starters · Subtle Polish · Shimmer & Space · Rhythmic Stutter · Glitch & Chaos · Pitch & Harmony · Freeze & Drone · Lo-fi & Dark · **Vocal FX** · **Drum Bus** · **Bass Tools** |
+Starters · **Bass** (808s, subs, reese, growls) · **Pads** · Keys & Plucks · Leads · **Vocal Chops** · Textures · **Drums & Perc** · FX & Risers · Wavetable
 
 - **Level-matched.** Presets are level-matched so switching doesn't jump in volume, and Spark has a transparent safety clipper on its output.
 - **Presets act on your sound.** They shape whatever sound is loaded; they don't load a sample. Drop in the kind of sound the preset's note suggests.
 - **Your own presets.** **Save** stores your own presets under **User**, as `.sparkpreset` files in `Documents/Spark/Presets`. They're easy to back up or share. Right-click a user preset to reveal or delete it.
 - **Locks still apply.** Locked facets stay put when you browse presets.
+- **Presets reset the FX rack** to its defaults (only the Space reverb on), so each preset sounds the same every time. Use **Chain** on the FX page to add effects back.
 
 ## Using Spark
 
@@ -30,14 +22,22 @@ Spark ships with **103 instrument presets** and **75 effect presets**, sorted in
 - **SPARK** rolls a new variation. **Mutate** sets how many facets move; **Chaos** sets how far they move.
 - **Locks.** Lock a facet in the list on the right and Spark, Breed and preset changes leave it alone.
 - **Lineage.** Every variation is saved along the bottom. Click one to go back to it. **Keep** stars the current one. **Breed** crosses the current variation with your most recent kept one. Right-click a variation to keep or un-keep it. The lineage is saved with your project.
-- **Source (instrument).** Drag a WAV, AIFF or FLAC onto Spark, or use Import. Spark switches between:
+- **Source.** Drag a WAV, AIFF or FLAC onto Spark, or use Import. Spark detects the sound's pitch, so it plays in tune across the keyboard (the detected note is shown under the waveform). Switch between:
   - **Grain**: plays the sound as overlapping grains (Position, Grain, Motion).
   - **Table**: plays a 64-frame wavetable sliced from the sound, with pitch-detected single cycles (Morph, Motion).
+  - **Sample**: plays the sound itself from the start, repitched per key.
+- **Motion** also spreads the wavetable voice in stereo: the centre stays solid and the unison detune goes to the sides.
 - **Wavetables.**
   - **Import.** Wavetable WAVs from Serum, Serum 2 or Vital are detected automatically, either by their `clm` marker or by being an exact multiple of 2048 samples.
   - **Make table** slices whatever sound is loaded.
   - **Export** writes a 2048-samples-per-frame WAV with the current **Drive** and **Tone** baked in. Serum and Vital load it as a wavetable. Exports go to `Documents/Spark/Wavetables`.
-- **About Serum presets (.fxp / .SerumPreset).** These files are settings for Serum's own engine, not audio, so Spark can't play them. To bring a Serum sound in, either load its wavetable WAV or bounce a note from Serum and drop the audio into Spark.
+- **Shapeshift.** Bounce one held note from Serum, Serum 2, Vital or any synth (a few seconds, including the release) and press **Shapeshift**. Spark:
+  - finds the note,
+  - rebuilds the sound as a 64-frame wavetable that follows how its tone changes over time (a filter sweep becomes a table scan),
+  - matches the amp envelope (attack, decay, sustain, release and their curves) and the stereo width.
+
+  The result is an ordinary Spark sound, so every facet, envelope and effect can reshape it. **TABLE** plays the rebuild; **SAMPLE** plays the original bounce. It works best on pitched sounds; noise layers and pitch bends inside the note come out simplified.
+- **About Serum presets (.fxp / .SerumPreset).** These files are settings for Serum's own engine, not audio, so Spark can't play them. Bounce a note and Shapeshift it, or load the preset's wavetable WAV.
 - **Shape (envelopes).** Every note has two envelopes, each with Attack, Hold, Decay, Sustain and Release:
   - **Amp** sets the volume of each note.
   - **Tone** sweeps the Tone filter on each note. Set **Amount** to make it open (positive) or close (negative), for plucks, wows and acid squelches.
@@ -47,9 +47,12 @@ Spark ships with **103 instrument presets** and **75 effect presets**, sorted in
   - **Curves.** Drag the small circle in the middle of a slope to bend its curve: *punchy* for snappy hits, *swell* for slow blooms.
   - **Velocity.** This sets how much playing harder makes notes louder, or deepens the tone sweep.
   - **Big editor.** Every number can be dragged (Shift for fine moves, double-click to reset). The ⤢ button opens a large editor with both envelopes side by side.
-- **Spark FX.**
-  - **Freeze** stops listening and keeps playing grains from what's already captured.
-  - **Capture to sample** saves the last four seconds of input to `Music/Spark/Captures` so you can drag it into the Spark instrument.
+- **FX page.** Click **FX** at the top. Seven effects run in order: **Distortion** → **EQ** → **Chorus** → **Grains** (a pitched grain cloud) → **Stutter** (tempo-synced) → **Delay** (ping-pong, tempo-synced) → **Reverb**.
+  - Each effect has an on switch and a lock. **SPARK** and **Breed** also vary the effects that are on and unlocked.
+  - **SPARK FX** rolls only the effects. **Chain** loads a ready-made rack. **ALL OFF** clears everything except the reverb.
+  - The Space facet sets the reverb amount, so it still works from the main page.
+
+Spark 1.3 retires the separate Spark FX plugin; its sound lives on in the FX page. If you installed an earlier version, the old Spark FX stays installed, so older projects that use it still open.
 
 ## Installing on a Mac
 
@@ -61,7 +64,7 @@ Spark ships with **103 instrument presets** and **75 effect presets**, sorted in
 
 1. Download `Spark-<version>-Windows-Setup.exe` from Releases.
 2. The installer isn't code-signed yet, so SmartScreen may say "Windows protected your PC". Click **More info**, then **Run anyway**.
-3. The plugins install to `C:\Program Files\Common Files\VST3`. Rescan plug-ins in your DAW. In Ableton Live, go to Settings → Plug-Ins, turn on **Use VST3 Plug-in System Folders**, then click **Rescan**.
+3. The plugin installs to `C:\Program Files\Common Files\VST3`. Rescan plug-ins in your DAW. In Ableton Live, go to Settings → Plug-Ins, turn on **Use VST3 Plug-in System Folders**, then click **Rescan**.
 
 ## Projects keep their sound
 
@@ -73,11 +76,11 @@ Requirements: CMake 3.22+, a C++20 compiler (Xcode 15+ on macOS). JUCE 8.0.10 is
 
 ```bash
 cmake -B build -G Xcode -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64"
-cmake --build build --config Release --target Spark_All SparkFX_All
+cmake --build build --config Release --target Spark_All
 bash packaging/macos/make-installer.sh 1.0.0      # → dist/Spark-1.0.0-macOS.pkg
 ```
 
-Tests: configure with `-DSPARK_BUILD_TESTS=ON`, build `SparkTests` and run it. It renders every preset, checks the randomiser, locks, lineage and state saving, round-trips wavetables, runs the effect, and saves UI snapshots.
+Tests: configure with `-DSPARK_BUILD_TESTS=ON`, build `SparkTests` and run it. It renders every preset, checks the randomiser, locks, lineage and state saving, round-trips wavetables, checks every effect and Shapeshift, and saves UI snapshots.
 
 ### Continuous builds
 

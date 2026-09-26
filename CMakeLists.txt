@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(Spark VERSION 1.1.0 LANGUAGES C CXX)
+project(Spark VERSION 1.3.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -46,7 +46,8 @@ set(SPARK_COMMON_SOURCES
     Source/Common/Components.cpp
     Source/Common/Wavetable.cpp
     Source/Instrument/InstrumentPresets.cpp
-    Source/FX/FxPresets.cpp)
+    Source/Instrument/FxRack.cpp
+    Source/Instrument/Shapeshift.cpp)
 
 function(spark_configure target)
     target_sources(${target} PRIVATE ${SPARK_COMMON_SOURCES})
@@ -71,7 +72,6 @@ endfunction()
 # ---------- Spark (instrument) ----------
 juce_add_plugin(Spark
     COMPANY_NAME "Spark Audio"
-    COMPANY_WEBSITE "https://github.com/marzyesports-commits/spark"
     BUNDLE_ID com.sparkaudio.spark
     PLUGIN_MANUFACTURER_CODE Sprk
     PLUGIN_CODE Spk1
@@ -92,36 +92,9 @@ juce_add_plugin(Spark
 target_sources(Spark PRIVATE
     Source/Instrument/InstrumentProcessor.cpp
     Source/Instrument/InstrumentEditor.cpp
+    Source/Instrument/FxPage.cpp
     Source/Instrument/SparkVoice.cpp)
 spark_configure(Spark)
-
-# ---------- Spark FX (effect) ----------
-juce_add_plugin(SparkFX
-    COMPANY_NAME "Spark Audio"
-    COMPANY_WEBSITE "https://github.com/marzyesports-commits/spark"
-    BUNDLE_ID com.sparkaudio.sparkfx
-    PLUGIN_MANUFACTURER_CODE Sprk
-    PLUGIN_CODE Spk2
-    FORMATS ${SPARK_FORMATS}
-    PRODUCT_NAME "Spark FX"
-    IS_SYNTH FALSE
-    NEEDS_MIDI_INPUT FALSE
-    NEEDS_MIDI_OUTPUT FALSE
-    IS_MIDI_EFFECT FALSE
-    EDITOR_WANTS_KEYBOARD_FOCUS FALSE
-    COPY_PLUGIN_AFTER_BUILD FALSE
-    VST3_CATEGORIES Fx
-    AU_MAIN_TYPE kAudioUnitType_Effect
-    ICON_BIG Resources/Icon.png
-    HARDENED_RUNTIME_ENABLED ${SPARK_HARDENED_RUNTIME}
-    HARDENED_RUNTIME_OPTIONS com.apple.security.device.audio-input
-    MICROPHONE_PERMISSION_ENABLED TRUE
-    MICROPHONE_PERMISSION_TEXT "Spark FX processes live audio input in standalone mode.")
-
-target_sources(SparkFX PRIVATE
-    Source/FX/FxProcessor.cpp
-    Source/FX/FxEditor.cpp)
-spark_configure(SparkFX)
 
 # ---------- Offline tests (not shipped) ----------
 option(SPARK_BUILD_TESTS "Build the offline render tests" OFF)
@@ -131,9 +104,8 @@ if(SPARK_BUILD_TESTS)
         Tests/SparkTests.cpp
         Source/Instrument/InstrumentProcessor.cpp
         Source/Instrument/InstrumentEditor.cpp
+        Source/Instrument/FxPage.cpp
         Source/Instrument/SparkVoice.cpp
-        Source/FX/FxProcessor.cpp
-        Source/FX/FxEditor.cpp
         ${SPARK_COMMON_SOURCES})
     target_include_directories(SparkTests PRIVATE Source)
     target_compile_definitions(SparkTests PRIVATE

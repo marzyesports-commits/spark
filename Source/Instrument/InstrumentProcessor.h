@@ -5,6 +5,7 @@
 #include "Common/SparkProcessorBase.h"
 #include "Common/Wavetable.h"
 #include "Common/Envelope.h"
+#include "FxRack.h"
 
 namespace spark
 {
@@ -21,6 +22,8 @@ struct SourceData : public juce::ReferenceCountedObject
     bool loadedAsWavetable = false;
     std::vector<float> peaks;         // 0..1 envelope for drawing, 256 bins
     int tableFrameLength = 0;         // >0 when the file was a wavetable (its frame size)
+    float rootNote = 60.0f;           // MIDI note the recording plays at (fractional = detuned)
+    bool shapeshifted = false;        // table was rebuilt by Shapeshift
 
     void computePeaks();
 
@@ -37,7 +40,7 @@ class InstrumentProcessor : public SparkProcessorBase,
 {
 public:
     enum Facet { pitch, position, grain, morph, tone, drive, motion, space };
-    enum Mode { grainMode = 0, tableMode = 1 };
+    enum Mode { grainMode = 0, tableMode = 1, sampleMode = 2 };
 
     InstrumentProcessor();
     ~InstrumentProcessor() override;
@@ -46,11 +49,23 @@ public:
     SourceData::Ptr getSource() const;
     bool loadFile (const juce::File&, juce::String& error);
     void makeTableFromSample();
+    // Rebuilds a bounced note from another synth with Spark's engine. Empty file = use the current sound.
+    bool shapeshift (const juce::File&, juce::String& summary);
+    juce::String getLastShapeshiftSummary() const { return lastShapeshift; }
     bool exportTable (const juce::File&, juce::String& error) const;
     juce::AudioFormatManager& getFormatManager() noexcept { return formats; }
     juce::String getSupportedExtensions() const;
 
     Mode getMode() const noexcept { return (Mode) juce::roundToInt (modeParam->load()); }
+    void setMode (Mode);
+
+    // ---- effects rack
+    std::vector<juce::RangedAudioParameter*> getRandomisableExtras() const override;
+    bool isModuleLocked (const juce::String& moduleId) const;
+    void setModuleLocked (const juce::String& moduleId, bool);
+    void sparkEffects();            // roll only the enabled, unlocked effects
+    void loadChain (int index);     // load an effect-chain preset
+    juce::String getChainName() const { return chainName; }
     void getCoreShape (std::vector<float>& out, int n) override;
 
     // raw parameter access for voices (audio thread)
@@ -83,6 +98,7 @@ public:
         std::atomic<float>* toneAmount = nullptr;   // -1..1 = -5..+5 octaves
         std::atomic<float>* toneVelocity = nullptr;
         std::atomic<float>* level = nullptr;
+        std::atomic<float>* scanTime = nullptr;
     } params;
 
     // ---- AudioProcessor
@@ -116,7 +132,11 @@ private:
     mutable juce::SpinLock sourceLock;
     juce::ReferenceCountedArray<SourceData> retired; // freed on the message thread, never the audio thread
 
-    juce::dsp::Reverb reverb;
+    FxRack rack;
+    juce::StringArray lockedModules;
+    mutable juce::CriticalSection lockLock;
+    juce::String chainName { "Clean" };
+    juce::String lastShapeshift;
     juce::SmoothedValue<float> levelSmooth;
     double currentSampleRate = 44100.0;
 

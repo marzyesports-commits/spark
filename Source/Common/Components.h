@@ -41,6 +41,8 @@ public:
     ~Header() override;
     std::function<void (juce::Component& anchor)> onSettings;
     std::function<void()> onBrowse;
+    std::function<void (int page)> onPage;   // 0 = SOUND, 1 = FX
+    void setPage (int page);
 
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -57,6 +59,8 @@ private:
     PillButton prev { {}, PillButton::Style::ghost, Icon::chevronLeft };
     PillButton next { {}, PillButton::Style::ghost, Icon::chevronRight };
     PillButton settings { {}, PillButton::Style::outline, Icon::settings };
+    PillButton soundTab { "SOUND", PillButton::Style::segment };
+    PillButton fxTab { "FX", PillButton::Style::segment };
     juce::Rectangle<int> presetArea, kindArea;
 };
 
@@ -140,6 +144,30 @@ public:
     void mouseDoubleClick (const juce::MouseEvent&) override;
     void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
     bool framed = false; // draw a rounded box behind it
+
+private:
+    juce::RangedAudioParameter& param;
+    juce::ParameterAttachment attachment;
+    juce::String label;
+    float dragStart = 0.0f;
+    bool hover = false, dragging = false;
+};
+
+// Small arc knob for effect controls (drag up/down, Shift = fine, double-click = reset).
+class ArcKnob : public juce::Component,
+                public juce::SettableTooltipClient
+{
+public:
+    ArcKnob (juce::RangedAudioParameter&, const juce::String& label);
+    std::function<bool()> isActive; // gold when true, grey when false
+    void paint (juce::Graphics&) override;
+    void mouseEnter (const juce::MouseEvent&) override { hover = true; repaint(); }
+    void mouseExit (const juce::MouseEvent&) override { hover = false; repaint(); }
+    void mouseDown (const juce::MouseEvent&) override;
+    void mouseDrag (const juce::MouseEvent&) override;
+    void mouseUp (const juce::MouseEvent&) override;
+    void mouseDoubleClick (const juce::MouseEvent&) override;
+    void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
 
 private:
     juce::RangedAudioParameter& param;
@@ -282,6 +310,7 @@ protected:
     void showMessage (const juce::String& title, const juce::String& text);
     SparkLookAndFeel& getSparkLookAndFeel() noexcept { return lookAndFeel; }
     void setBrowserVisible (bool);
+    Header& getHeader() noexcept { return header; }
     virtual void hideOtherOverlays() {}
     void promptToSavePreset();
 

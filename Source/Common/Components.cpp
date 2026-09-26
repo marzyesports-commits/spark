@@ -157,6 +157,17 @@ Header::Header (SparkProcessorBase& p, bool isFx) : processor (p), fx (isFx)
     prev.setTooltip ("Previous preset");
     next.setTooltip ("Next preset");
     settings.setTooltip ("Menu");
+    for (auto* b : { &soundTab, &fxTab })
+    {
+        addAndMakeVisible (b);
+        b->setFontHeight (11.0f);
+        b->setLetterSpacing (0.14f);
+    }
+    soundTab.setTooltip ("The sound: source, shape, facets");
+    fxTab.setTooltip ("The effects rack");
+    soundTab.onClick = [this] { setPage (0); if (onPage) onPage (0); };
+    fxTab.onClick = [this] { setPage (1); if (onPage) onPage (1); };
+    setPage (0);
     prev.onClick = [this] { processor.loadPreset (processor.getPresetIndex() - 1); };
     next.onClick = [this] { processor.loadPreset (processor.getPresetIndex() + 1); };
     settings.onClick = [this] { if (onSettings) onSettings (settings); };
@@ -172,8 +183,10 @@ void Header::resized()
     prev.setBounds (presetArea.getX() + 4, presetArea.getY() + 4, 36, 36);
     next.setBounds (presetArea.getRight() - 40, presetArea.getY() + 4, 36, 36);
     settings.setBounds (b.getRight() - 44, b.getCentreY() - 22, 44, 44);
-    kindArea = juce::Rectangle<int> (fx ? 86 : 124, 34).withRightX (settings.getX() - 12).withCentre ({ 0, b.getCentreY() });
+    kindArea = juce::Rectangle<int> (150, 40).withCentre ({ 0, b.getCentreY() });
     kindArea.setX (settings.getX() - 12 - kindArea.getWidth());
+    soundTab.setBounds (kindArea.getX() + 3, kindArea.getY() + 3, 84, 34);
+    fxTab.setBounds (soundTab.getRight(), kindArea.getY() + 3, kindArea.getRight() - 3 - soundTab.getRight(), 34);
 }
 
 void Header::paint (juce::Graphics& g)
@@ -225,15 +238,18 @@ void Header::paint (juce::Graphics& g)
     auto chev = juce::Rectangle<float> (12.0f, 12.0f).withCentre ({ pill.getCentreX() + nameWidth * 0.5f + 12.0f, pill.getY() + 30.0f });
     g.strokePath (makeIcon (Icon::chevronDown, chev), juce::PathStrokeType (1.6f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
 
-    // plugin kind tag (the instrument and the effect are separate plugins)
+    // SOUND | FX page switch
     auto tag = kindArea.toFloat();
     g.setColour (panel);
-    g.fillRoundedRectangle (tag, 17.0f);
+    g.fillRoundedRectangle (tag, 20.0f);
     g.setColour (line);
-    g.drawRoundedRectangle (tag.reduced (0.5f), 17.0f, 1.0f);
-    g.setColour (text2);
-    g.setFont (fonts::body (11.0f, true).withExtraKerningFactor (0.14f));
-    g.drawText (fx ? "EFFECT" : "INSTRUMENT", tag, juce::Justification::centred, false);
+    g.drawRoundedRectangle (tag.reduced (0.5f), 20.0f, 1.0f);
+}
+
+void Header::setPage (int page)
+{
+    soundTab.setToggleState (page == 0, juce::dontSendNotification);
+    fxTab.setToggleState (page == 1, juce::dontSendNotification);
 }
 
 void Header::mouseMove (const juce::MouseEvent& e)
@@ -605,6 +621,83 @@ void ValueBox::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheel
     const float step = e.mods.isShiftDown() ? 0.005f : 0.03f;
     const float v = juce::jlimit (0.0f, 1.0f, param.getValue() + (w.deltaY > 0 ? step : -step));
     attachment.setValueAsCompleteGesture (param.convertFrom0to1 (v));
+}
+
+// =====================================================================================
+ArcKnob::ArcKnob (juce::RangedAudioParameter& p, const juce::String& l)
+    : param (p), attachment (p, [this] (float) { repaint(); }), label (l)
+{
+    setTitle (p.getName (64));
+    setTooltip (p.getName (64) + ". Drag up or down, Shift for fine, double-click to reset.");
+    setMouseCursor (juce::MouseCursor::UpDownResizeCursor);
+}
+
+void ArcKnob::paint (juce::Graphics& g)
+{
+    using namespace colours;
+    const bool active = ! isActive || isActive();
+    auto b = getLocalBounds().toFloat();
+    const float size = juce::jmin (b.getWidth() - 6.0f, b.getHeight() - 30.0f, 52.0f);
+    const juce::Point<float> c (b.getCentreX(), b.getY() + 4.0f + size * 0.5f);
+    const float r = size * 0.5f - 3.0f;
+    const float a0 = juce::degreesToRadians (-135.0f), a1 = juce::degreesToRadians (135.0f);
+    const float v = param.getValue();
+
+    juce::Path track;
+    track.addCentredArc (c.x, c.y, r, r, 0.0f, a0, a1, true);
+    g.setColour (line);
+    g.strokePath (track, juce::PathStrokeType (4.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+    juce::Path val;
+    val.addCentredArc (c.x, c.y, r, r, 0.0f, a0, a0 + (a1 - a0) * juce::jmax (0.002f, v), true);
+    g.setColour (active ? (dragging || hover ? goldHi : gold) : muted);
+    g.strokePath (val, juce::PathStrokeType (4.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+
+    g.setColour (raised);
+    g.fillEllipse (juce::Rectangle<float> (r * 1.3f, r * 1.3f).withCentre (c));
+    const float ang = a0 + (a1 - a0) * v;
+    const juce::Point<float> tip (c.x + std::sin (ang) * r * 0.5f, c.y - std::cos (ang) * r * 0.5f);
+    g.setColour (active ? text : muted);
+    g.drawLine ({ c.getPointOnCircumference (r * 0.2f, ang), tip }, 2.0f);
+
+    auto textArea = b.withTrimmedTop (size + 6.0f);
+    g.setColour (active ? text2 : muted);
+    g.setFont (fonts::body (10.0f, true).withExtraKerningFactor (0.12f));
+    g.drawText (label, textArea.removeFromTop (13.0f), juce::Justification::centred, false);
+    g.setColour (active ? text : muted);
+    g.setFont (fonts::mono (10.0f));
+    g.drawText (param.getCurrentValueAsText(), textArea.removeFromTop (13.0f), juce::Justification::centred, false);
+}
+
+void ArcKnob::mouseDown (const juce::MouseEvent&)
+{
+    dragStart = param.getValue();
+    dragging = true;
+    attachment.beginGesture();
+    repaint();
+}
+
+void ArcKnob::mouseDrag (const juce::MouseEvent& e)
+{
+    const float sensitivity = e.mods.isShiftDown() ? 0.0008f : 0.005f;
+    attachment.setValueAsPartOfGesture (param.convertFrom0to1 (juce::jlimit (0.0f, 1.0f, dragStart - (float) e.getDistanceFromDragStartY() * sensitivity)));
+}
+
+void ArcKnob::mouseUp (const juce::MouseEvent&)
+{
+    attachment.endGesture();
+    dragging = false;
+    repaint();
+}
+
+void ArcKnob::mouseDoubleClick (const juce::MouseEvent&)
+{
+    attachment.setValueAsCompleteGesture (param.convertFrom0to1 (param.getDefaultValue()));
+}
+
+void ArcKnob::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheelDetails& w)
+{
+    const float step = e.mods.isShiftDown() ? 0.005f : 0.03f;
+    attachment.setValueAsCompleteGesture (param.convertFrom0to1 (juce::jlimit (0.0f, 1.0f, param.getValue() + (w.deltaY > 0 ? step : -step))));
 }
 
 // =====================================================================================

@@ -27,7 +27,7 @@ public:
     using juce::SynthesiserVoice::renderNextBlock;
     void setCurrentPlaybackSampleRate (double) override;
 
-    static constexpr int rootNote = 60; // a source plays at its own pitch on C3/C4 (MIDI 60)
+    // Sources play at their own pitch on their root note (MIDI 60 unless the pitch was detected)
 
 private:
     struct Grain
@@ -42,7 +42,8 @@ private:
     void spawnGrain (const SourceData&, double ratio, float position, float grainSec, float motion, float scan);
     void renderGrains (float* left, float* right, int n, const SourceData&, double ratio,
                        float position, float grainSec, float motion, float scan);
-    void renderTable (float* left, float* right, int n, const Wavetable&, double baseHz, float morph, float motion);
+    void renderTable (float* left, float* right, int n, const Wavetable&, double baseHz, float morph, float motion, float scanSeconds);
+    void renderSample (float* left, float* right, int n, const SourceData&, double ratio);
 
     InstrumentProcessor& processor;
     SourceData::Ptr source;
@@ -58,6 +59,8 @@ private:
     float velocity = 1.0f;
     float bendSemitones = 0.0f;
     int note = 60;
+    double samplePos = 0.0;      // Sample mode play head
+    double noteSamples = 0.0;    // time since note-on, for Morph scan
 
     juce::AudioBuffer<float> scratch;
 };

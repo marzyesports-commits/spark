@@ -11,13 +11,13 @@
         <line choice="au"/>
         <line choice="apps"/>
     </choices-outline>
-    <choice id="vst3" title="VST3 plugins" description="Spark and Spark FX for Ableton Live, Cubase, Bitwig, Reaper, Studio One and FL Studio.">
+    <choice id="vst3" title="VST3 plugins" description="Spark for Ableton Live, Cubase, Bitwig, Reaper, Studio One and FL Studio.">
         <pkg-ref id="com.sparkaudio.spark.vst3"/>
     </choice>
-    <choice id="au" title="Audio Unit plugins" description="Spark and Spark FX for Logic Pro, GarageBand and Ableton Live.">
+    <choice id="au" title="Audio Unit plugins" description="Spark for Logic Pro, GarageBand and Ableton Live.">
         <pkg-ref id="com.sparkaudio.spark.au"/>
     </choice>
-    <choice id="apps" title="Standalone apps" description="Spark and Spark FX as apps you can run without a DAW.">
+    <choice id="apps" title="Standalone apps" description="Spark as an app you can run without a DAW.">
         <pkg-ref id="com.sparkaudio.spark.apps"/>
     </choice>
     <pkg-ref id="com.sparkaudio.spark.vst3" version="@VERSION@" onConclusion="none">vst3.pkg</pkg-ref>

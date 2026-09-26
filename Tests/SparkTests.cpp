@@ -4,8 +4,8 @@
 #include <set>
 #include "Instrument/InstrumentProcessor.h"
 #include "Instrument/InstrumentEditor.h"
-#include "FX/FxProcessor.h"
-#include "FX/FxEditor.h"
+#include "Instrument/Shapeshift.h"
+#include "Instrument/FxPage.h"
 #include "Common/Envelope.h"
 
 using namespace spark;
@@ -227,7 +227,7 @@ int main (int argc, char** argv)
 
         // velocity (Table mode, no motion: notes are consistent from one to the next)
         setN (p, "decay", 0.4f); setN (p, "sustain", 1.0f);
-        p.apvts.getParameter ("mode")->setValueNotifyingHost (1.0f);
+        p.setMode (InstrumentProcessor::tableMode);
         p.facetParam (InstrumentProcessor::motion).setValueNotifyingHost (0.0f);
         auto renderVel = [&] (float vel)
         {
@@ -409,71 +409,295 @@ int main (int argc, char** argv)
         check (small.getSize() < 40000, "Projects using the built-in sound stay small (" + juce::String (small.getSize() / 1024) + " KB)");
     }
 
-    // ---------------------------------------------------------------- effect
-    std::cout << "Spark FX: processes live audio" << std::endl;
+    // ---------------------------------------------------------------- effects rack
+    std::cout << "Effects rack: every module, chains, Spark on effects" << std::endl;
     {
-        FxProcessor p;
+        auto setReal = [] (InstrumentProcessor& p, const juce::String& id, float v)
+        {
+            auto* prm = p.apvts.getParameter (id);
+            prm->setValueNotifyingHost (prm->convertTo0to1 (v));
+        };
+        InstrumentProcessor p;
         p.setRateAndBufferSizeDetails (sr, 512);
         p.prepareToPlay (sr, 512);
-        const int total = (int) (sr * 4.0);
-        juce::AudioBuffer<float> in (2, total);
-        for (int i = 0; i < total; ++i)
-        {
-            const float t = (float) i / (float) sr;
-            float x = 0.3f * std::sin (juce::MathConstants<float>::twoPi * 220.0f * t) * (0.6f + 0.4f * std::sin (t * 3.0f));
-            if (i % 12000 < 600) x += 0.5f * std::exp (-(float) (i % 12000) / 120.0f) * (juce::Random::getSystemRandom().nextFloat() * 2 - 1);
-            in.setSample (0, i, x);
-            in.setSample (1, i, x);
-        }
+        p.loadPreset (2); // Init Table: deterministic
+        p.facetParam (InstrumentProcessor::motion).setValueNotifyingHost (0.0f);
+        auto dry = renderNotes (p, sr, { 57, 60, 64 }, 1.0, 1.2);
+        const auto dryTail = stats (dry, (int) (1.6 * sr), (int) (0.5 * sr));
 
-        juce::String levels = "category,preset,rms_db,peak\n";
-            const float dryDb = juce::Decibels::gainToDecibels (stats (in, (int) sr, total - (int) sr).rms);
-        for (int preset = 0; preset < p.getNumPresets(); ++preset)
+        for (const auto& m : FxRack::modules())
         {
-            p.loadPreset (preset);
-            const auto& pr = p.getPreset (preset);
-            juce::AudioBuffer<float> out (in);
-            for (int pos = 0; pos < total; pos += 512)
+            if (m.id == "reverb") continue;
+            setReal (p, m.onParam, 1.0f);
+            if (m.id == "grain") setReal (p, "fxGrainMix", 0.8f);
+            if (m.id == "eq") { setReal (p, "fxEqLow", 8.0f); setReal (p, "fxEqHigh", -10.0f); }
+            if (m.id == "stutter") setReal (p, "fxStutterAmount", 1.0f);
+            auto wet = renderNotes (p, sr, { 57, 60, 64 }, 1.0, 1.2);
+            const auto st = stats (wet, 0, wet.getNumSamples());
+            double diff = 0;
+            for (int i = 0; i < wet.getNumSamples(); ++i) diff += std::abs (wet.getSample (0, i) - dry.getSample (0, i));
+            diff /= wet.getNumSamples();
+            juce::String extra;
+            if (m.id == "delay")
             {
-                juce::AudioBuffer<float> view (out.getArrayOfWritePointers(), 2, pos, juce::jmin (512, total - pos));
-                juce::MidiBuffer m;
-                p.processBlock (view, m);
+                const auto tail = stats (wet, (int) (1.6 * sr), (int) (0.5 * sr));
+                check (tail.rms > dryTail.rms * 2.0f, "Delay leaves echoes after the note (" + juce::String (tail.rms, 4) + " vs " + juce::String (dryTail.rms, 4) + ")");
             }
-            const auto s = stats (out, (int) sr, total - (int) sr);
-            float diff = 0;
-            for (int i = (int) sr; i < total; ++i) diff += std::abs (out.getSample (0, i) - in.getSample (0, i));
-            const float db = juce::Decibels::gainToDecibels (s.rms, -100.0f);
-            check (s.finite && s.peak < 1.5f && std::abs (db - dryDb) < 12.0f && diff / (float) (total - sr) > 0.005f,
-                   pr.category + " / " + pr.name + ": " + juce::String (db - dryDb, 1) + " dB vs dry, peak " + juce::String (s.peak, 2));
-            levels << pr.category << "," << pr.name << "," << juce::String (db - dryDb, 2) << "," << juce::String (s.peak, 3) << "\n";
-            if (preset % 8 == 0)
-                writeWav (outDir.getChildFile ("fx-" + juce::String (preset) + "-" + pr.name.replaceCharacter (' ', '_') + ".wav"), out, sr);
+            check (st.finite && st.peak < 1.2f && diff > 0.004, m.name + " changes the sound (avg diff " + juce::String (diff, 4) + ", peak " + juce::String (st.peak, 2) + ")");
+            writeWav (outDir.getChildFile ("rack-" + m.id + ".wav"), wet, sr);
+            setReal (p, m.onParam, 0.0f);
+            renderNotes (p, sr, {}, 0.1, 0.4); // let it settle
         }
-        outDir.getChildFile ("fx-levels.csv").replaceWithText (levels);
-        check (p.getNumFactoryPresets() >= 70, juce::String (p.getNumFactoryPresets()) + " FX presets");
 
-        // Bypass passes the dry signal through
-        p.apvts.getParameter ("bypass")->setValueNotifyingHost (1.0f);
-        juce::AudioBuffer<float> out (in);
-        for (int pos = 0; pos < total; pos += 512)
+        // switching a module on mid-note must not click: look for sample-to-sample jumps
         {
-            juce::AudioBuffer<float> view (out.getArrayOfWritePointers(), 2, pos, juce::jmin (512, total - pos));
-            juce::MidiBuffer m;
-            p.processBlock (view, m);
+            juce::AudioBuffer<float> out (2, (int) (1.0 * sr));
+            juce::AudioBuffer<float> blk (2, 512);
+            juce::MidiBuffer midi;
+            midi.addEvent (juce::MidiMessage::noteOn (1, 60, 0.8f), 0);
+            float maxJump = 0, maxJumpBefore = 0;
+            for (int pos = 0, k = 0; pos + 512 <= out.getNumSamples(); pos += 512, ++k)
+            {
+                if (k == 40) setReal (p, "fxDistOn", 1.0f);
+                juce::AudioBuffer<float> view (out.getArrayOfWritePointers(), 2, pos, 512);
+                p.processBlock (view, midi);
+                midi.clear();
+            }
+            // compare the switch-over (first 50 ms) with the steady sound before and after it
+            const int sw = 40 * 512, fade = (int) (0.05 * sr);
+            float maxWindow = 0, maxAfter = 0;
+            for (int i = 1; i < out.getNumSamples(); ++i)
+            {
+                const float j = std::abs (out.getSample (0, i) - out.getSample (0, i - 1));
+                if (i < sw) maxJumpBefore = juce::jmax (maxJumpBefore, j);
+                else if (i < sw + fade) maxWindow = juce::jmax (maxWindow, j);
+                else maxAfter = juce::jmax (maxAfter, j);
+            }
+            maxJump = maxWindow;
+            check (maxWindow <= juce::jmax (maxJumpBefore, maxAfter) * 1.15f, "Turning a module on crossfades without a click (" + juce::String (maxWindow, 3)
+                       + " during vs " + juce::String (juce::jmax (maxJumpBefore, maxAfter), 3) + " steady)");
+            setReal (p, "fxDistOn", 0.0f);
+            juce::MidiBuffer off; off.addEvent (juce::MidiMessage::allNotesOff (1), 0);
+            juce::AudioBuffer<float> t (2, 512);
+            for (int i = 0; i < 300; ++i) { p.processBlock (t, off); off.clear(); }
         }
-        float maxDiff = 0;
-        for (int i = (int) sr; i < total; ++i) maxDiff = juce::jmax (maxDiff, std::abs (out.getSample (0, i) - in.getSample (0, i)));
-        check (maxDiff < 1.0e-4f, "Bypass is transparent (max diff " + juce::String (maxDiff, 6) + ")");
-        p.apvts.getParameter ("bypass")->setValueNotifyingHost (0.0f);
 
-        juce::String error;
-        auto captured = p.captureToFile (error);
-        check (captured.existsAsFile() && captured.getSize() > 100000, "Capture writes a WAV (" + captured.getFileName() + ")");
-        captured.deleteFile();
+        // every chain renders cleanly
+        bool chainsOk = true;
+        for (int c = 0; c < (int) FxRack::chains().size(); ++c)
+        {
+            p.loadChain (c);
+            auto a = renderNotes (p, sr, { 57, 64 }, 0.6, 0.6);
+            const auto st = stats (a, 0, a.getNumSamples());
+            if (! st.finite || st.peak > 1.2f) { chainsOk = false; std::cout << "    chain " << FxRack::chains()[(size_t) c].name << " peak " << st.peak << std::endl; }
+        }
+        check (chainsOk, juce::String ((int) FxRack::chains().size()) + " effect chains render cleanly");
 
-        std::vector<float> shape;
-        p.getCoreShape (shape, 360);
-        check (shape.size() == 360, "Core ring gets a live shape");
+        // Spark moves enabled, unlocked effects; locked ones stay; recall brings them back
+        p.loadChain (0);
+        setReal (p, "fxDelayOn", 1.0f);
+        setReal (p, "fxChorusOn", 1.0f);
+        p.setModuleLocked ("chorus", true);
+        const float chorusBefore = p.apvts.getParameter ("fxChorusDepth")->getValue();
+        const float distBefore = p.apvts.getParameter ("fxDistDrive")->getValue();
+        p.spark(); // a variation that includes the delay settings
+        const auto before = p.currentExtraValues();
+        const int startIndex = p.lineage.currentIndex();
+        for (int i = 0; i < 6; ++i) p.spark();
+        const auto after = p.currentExtraValues();
+        check (before != after && after.count ("fxDelayFeedback") == 1, "Spark moves effects that are on");
+        check (p.apvts.getParameter ("fxChorusDepth")->getValue() == chorusBefore && after.count ("fxChorusDepth") == 0, "Locked effects never move");
+        check (p.apvts.getParameter ("fxDistDrive")->getValue() == distBefore, "Effects that are off are left alone");
+        p.recall (startIndex);
+        check (std::abs (p.apvts.getParameter ("fxDelayFeedback")->getValue() - before.at ("fxDelayFeedback")) < 1.0e-4f, "Recall restores effect settings");
+        p.sparkEffects();
+        check (p.currentExtraValues() != before, "SPARK FX rolls just the effects");
+
+        juce::MemoryBlock state;
+        p.getStateInformation (state);
+        InstrumentProcessor q;
+        q.setStateInformation (state.getData(), (int) state.getSize());
+        check (q.isModuleLocked ("chorus") && ! q.isModuleLocked ("delay") && q.lineage.nodes().back().extras.size() == p.lineage.nodes().back().extras.size(),
+               "Effect locks and effect history are saved with the project");
+    }
+
+    // ---------------------------------------------------------------- shapeshift
+    std::cout << "Shapeshift: rebuilds a synth note" << std::endl;
+    {
+        // A Serum-style note: 3 detuned saws (stereo), a low-pass that sweeps down, and a known envelope.
+        const double f0 = 110.0; // A2 = MIDI 45
+        const double holdSec = 1.6, relSec = 0.35, total = holdSec + 1.0;
+        const int len = (int) (total * sr);
+        juce::AudioBuffer<float> synth (2, len);
+        synth.clear();
+        // 7-voice unison, spread +/-0.2 semitones, random start phases, alternating pan (like Serum's unison)
+        constexpr int voices = 7;
+        double ph[voices], inc[voices];
+        float panL[voices], panR[voices];
+        juce::Random vr (11);
+        for (int v = 0; v < voices; ++v)
+        {
+            const double det = -0.2 + 0.4 * v / (voices - 1);
+            inc[v] = f0 * std::pow (2.0, det / 12.0) / sr;
+            ph[v] = vr.nextDouble();
+            const float pan = v == voices / 2 ? 0.0f : (v % 2 == 0 ? -0.7f : 0.7f);
+            panL[v] = std::sqrt (0.5f * (1.0f - pan));
+            panR[v] = std::sqrt (0.5f * (1.0f + pan));
+        }
+        double lpL = 0, lpL2 = 0, lpR = 0, lpR2 = 0;
+        for (int i = 0; i < len; ++i)
+        {
+            const double t = i / sr;
+            // ADSR: A 15 ms, D ~400 ms (exponential), S 0.5, R 350 ms
+            double env;
+            if (t < 0.015) env = t / 0.015;
+            else if (t < holdSec) env = 0.5 + 0.5 * std::exp (-(t - 0.015) / 0.13);
+            else env = (0.5 + 0.5 * std::exp (-(holdSec - 0.015) / 0.13)) * std::exp (-(t - holdSec) / (relSec / 4.6));
+            const double cutoff = 600.0 + 5400.0 * std::exp (-t / 0.35);   // filter sweeps from 6 kHz to 600 Hz
+            const double a = 1.0 - std::exp (-2.0 * juce::MathConstants<double>::pi * cutoff / sr);
+            double l = 0, r = 0;
+            for (int v = 0; v < voices; ++v)
+            {
+                ph[v] += inc[v];
+                ph[v] -= std::floor (ph[v]);
+                const double saw = 2.0 * ph[v] - 1.0;
+                l += saw * panL[v];
+                r += saw * panR[v];
+            }
+            lpL += a * (l - lpL); lpL2 += a * (lpL - lpL2);
+            lpR += a * (r - lpR); lpR2 += a * (lpR - lpR2);
+            synth.setSample (0, i, (float) (lpL2 * env * 0.15));
+            synth.setSample (1, i, (float) (lpR2 * env * 0.15));
+        }
+        auto noteFile = outDir.getChildFile ("serum-style-A2.wav");
+        writeWav (noteFile, synth, sr);
+
+        const auto res = shapeshift::analyse (synth, sr);
+        check (res.ok && res.pitched && juce::roundToInt (res.midiNote) == 45, "Finds the note: " + shapeshift::noteName (res.midiNote));
+        check (res.attack > 0.004f && res.attack < 0.06f, "Attack " + juce::String (res.attack * 1000, 0) + " ms (original 15 ms)");
+        {
+            // the filter closing also makes the note quieter, so compare with its real loudness, not the 50% envelope setting
+            const auto peakPart = stats (synth, (int) (0.005 * sr), (int) (0.03 * sr)), midPart = stats (synth, (int) (1.0 * sr), (int) (0.3 * sr));
+            const float actual = midPart.rms / juce::jmax (1e-6f, peakPart.rms);
+            check (std::abs (res.sustain - actual) < 0.12f, "Sustain " + juce::String (res.sustain * 100, 0) + "% (the note really settles at " + juce::String (actual * 100, 0) + "%)");
+        }
+        check (res.release > 0.12f && res.release < 0.8f, "Release " + juce::String (res.release * 1000, 0) + " ms (original 350 ms)");
+        check (res.decayCurve > 0.15f, "Decay curve is punchy like the original (" + juce::String (res.decayCurve, 2) + ")");
+        check (res.frames.size() == 64 && res.scanSeconds > 1.2f, "64 frames scanned over " + juce::String (res.scanSeconds, 2) + " s");
+        check (res.width > 0.05f, "Detects stereo width (" + juce::String (res.width * 100, 0) + "%)");
+        std::cout << "    " << res.summary.replace ("\n", "\n    ") << std::endl;
+        // Now rebuild it in Spark and compare with the original
+        InstrumentProcessor p;
+        p.setRateAndBufferSizeDetails (sr, 512);
+        p.prepareToPlay (sr, 512);
+        juce::String summary;
+        check (p.shapeshift (noteFile, summary) && p.getMode() == InstrumentProcessor::tableMode && p.getSource()->shapeshifted, "Shapeshift loads into Spark");
+        p.facetParam (InstrumentProcessor::space).setValueNotifyingHost (0.0f);
+        auto rebuilt = renderNotes (p, sr, { 45 }, holdSec, total - holdSec);
+
+        auto envelopeDb = [] (const juce::AudioBuffer<float>& b, int hop)
+        {
+            std::vector<float> e;
+            for (int i = 0; i + hop <= b.getNumSamples(); i += hop)
+            {
+                double s2 = 0;
+                for (int k = 0; k < hop; ++k) s2 += b.getSample (0, i + k) * b.getSample (0, i + k);
+                e.push_back ((float) std::sqrt (s2 / hop));
+            }
+            const float pk = *std::max_element (e.begin(), e.end());
+            for (auto& v : e) v /= pk;
+            return e;
+        };
+        auto centroid = [] (const juce::AudioBuffer<float>& b, double rate)
+        {
+            juce::dsp::FFT fft (11);
+            std::vector<float> c;
+            std::vector<float> buf (4096);
+            for (int i = 0; i + 2048 <= b.getNumSamples(); i += 1024)
+            {
+                std::fill (buf.begin(), buf.end(), 0.0f);
+                for (int k = 0; k < 2048; ++k) buf[(size_t) k] = b.getSample (0, i + k) * (0.5f - 0.5f * std::cos (juce::MathConstants<float>::twoPi * k / 2048.0f));
+                fft.performFrequencyOnlyForwardTransform (buf.data());
+                double num = 0, den = 0;
+                for (int k = 1; k < 1024; ++k) { num += k * rate / 2048.0 * buf[(size_t) k]; den += buf[(size_t) k]; }
+                c.push_back (den > 1e-9 ? (float) (num / den) : 0.0f);
+            }
+            return c;
+        };
+        auto correlation = [] (const std::vector<float>& a, const std::vector<float>& b, size_t n)
+        {
+            n = std::min ({ n, a.size(), b.size() });
+            double ma = 0, mb = 0;
+            for (size_t i = 0; i < n; ++i) { ma += a[i]; mb += b[i]; }
+            ma /= n; mb /= n;
+            double sab = 0, saa = 0, sbb = 0;
+            for (size_t i = 0; i < n; ++i) { sab += (a[i] - ma) * (b[i] - mb); saa += (a[i] - ma) * (a[i] - ma); sbb += (b[i] - mb) * (b[i] - mb); }
+            return sab / std::sqrt (saa * sbb + 1e-12);
+        };
+        const int hop = (int) (sr * 0.01);
+        const auto eo = envelopeDb (synth, hop), er = envelopeDb (rebuilt, hop);
+        const double envCorr = correlation (eo, er, (size_t) ((holdSec + 0.5) / 0.01));
+        const auto co = centroid (synth, sr), cr = centroid (rebuilt, sr);
+        const double briCorr = correlation (co, cr, (size_t) (1.4 * sr / 1024));
+        check (envCorr > 0.9, "Volume shape matches the original (correlation " + juce::String (envCorr, 3) + ")");
+        check (briCorr > 0.8, "Brightness over time follows the filter sweep (correlation " + juce::String (briCorr, 3) + ")");
+        std::cout << "    brightness early/late: original " << juce::roundToInt (co[2]) << " / " << juce::roundToInt (co[(size_t) (1.3 * sr / 1024)])
+                  << " Hz, rebuild " << juce::roundToInt (cr[2]) << " / " << juce::roundToInt (cr[(size_t) (1.3 * sr / 1024)]) << " Hz" << std::endl;
+        writeWav (outDir.getChildFile ("shapeshift-original.wav"), synth, sr);
+        writeWav (outDir.getChildFile ("shapeshift-rebuilt.wav"), rebuilt, sr);
+
+        // The rebuild plays in tune on other notes, and SAMPLE mode plays the original
+        auto other = renderNotes (p, sr, { 57 }, 0.6, 0.1);
+        const float otherNote = shapeshift::detectMidiNote (other, sr);
+        check (std::abs (otherNote - 57.0f) < 0.3f, "Plays in tune an octave up (" + shapeshift::noteName (otherNote) + ")");
+        p.setMode (InstrumentProcessor::sampleMode);
+        auto orig = renderNotes (p, sr, { 45 }, 0.8, 0.1);
+        {
+            const float got = shapeshift::detectMidiNote (orig, sr);
+            const float direct = shapeshift::detectMidiNote (synth, sr);
+            juce::ignoreUnused (direct);
+            check (std::abs (got - 45.0f) < 0.3f, "SAMPLE mode plays the original at its own pitch");
+        }
+
+        // Saved projects bring the Shapeshift back exactly
+        p.setMode (InstrumentProcessor::tableMode);
+        juce::MemoryBlock state;
+        p.getStateInformation (state);
+        noteFile.deleteFile();
+        InstrumentProcessor q;
+        q.setStateInformation (state.getData(), (int) state.getSize());
+        bool same = q.getSource()->shapeshifted && q.getSource()->table->getNumFrames() == p.getSource()->table->getNumFrames();
+        if (same)
+            for (int k = 0; k < 64 && same; k += 9)
+                for (int i = 0; i < 2048; i += 97)
+                    same &= std::abs (q.getSource()->table->rawFrame (k)[(size_t) i] - p.getSource()->table->rawFrame (k)[(size_t) i]) < 1.0e-3f;
+        check (same && std::abs (q.getSource()->rootNote - p.getSource()->rootNote) < 1.0e-3f, "Projects restore the Shapeshift exactly");
+
+        // A pluck (no sustain) and an unpitched noise burst
+        juce::AudioBuffer<float> pluck (1, (int) (sr * 1.2));
+        for (int i = 0; i < pluck.getNumSamples(); ++i)
+        {
+            const double t = i / sr;
+            pluck.setSample (0, i, (float) (0.6 * std::exp (-t / 0.12) * (std::sin (juce::MathConstants<double>::twoPi * 220.0 * t) + 0.4 * std::sin (juce::MathConstants<double>::twoPi * 440.0 * t))));
+        }
+        const auto pr = shapeshift::analyse (pluck, sr);
+        check (pr.ok && juce::roundToInt (pr.midiNote) == 57 && pr.sustain < 0.05f && pr.decay > 0.2f && pr.decay < 1.2f,
+               "Plucks: " + shapeshift::noteName (pr.midiNote) + ", no sustain, decay " + juce::String (pr.decay * 1000, 0) + " ms");
+        juce::AudioBuffer<float> noise (1, (int) (sr * 1.0));
+        juce::Random rnd (3);
+        for (int i = 0; i < noise.getNumSamples(); ++i) noise.setSample (0, i, (rnd.nextFloat() * 2 - 1) * 0.4f * (float) std::exp (-i / sr / 0.3));
+        const auto nr = shapeshift::analyse (noise, sr);
+        check (nr.ok && ! nr.pitched && nr.frames.size() == 64, "Noise is handled as a texture (no false pitch)");
+
+        // Root-note detection on ordinary drops
+        juce::AudioBuffer<float> a3 (1, (int) (sr * 1.0));
+        for (int i = 0; i < a3.getNumSamples(); ++i) a3.setSample (0, i, 0.5f * (float) std::sin (juce::MathConstants<double>::twoPi * 220.0 * i / sr));
+        auto a3File = outDir.getChildFile ("a3.wav");
+        writeWav (a3File, a3, sr);
+        InstrumentProcessor r;
+        juce::String err;
+        r.loadFile (a3File, err);
+        check (std::abs (r.getSource()->rootNote - 57.0f) < 0.1f, "Dropped samples get their root note detected (" + shapeshift::noteName (r.getSource()->rootNote) + ")");
     }
 
     // ---------------------------------------------------------------- user presets
@@ -523,7 +747,7 @@ int main (int argc, char** argv)
         p.setLocked (InstrumentProcessor::tone, true);
         std::unique_ptr<juce::AudioProcessorEditor> ed (p.createEditor());
         snapshot (ed.get(), outDir.getChildFile ("ui-instrument.png"));
-        p.apvts.getParameter ("mode")->setValueNotifyingHost (1.0f);
+        p.setMode (InstrumentProcessor::tableMode);
         snapshot (ed.get(), outDir.getChildFile ("ui-instrument-table.png"));
         snapshot (ed.get(), outDir.getChildFile ("ui-instrument-small.png"), 0.75f);
         p.loadPreset (5);
@@ -544,33 +768,16 @@ int main (int argc, char** argv)
         ed.reset();
     }
     {
-        FxProcessor p;
-        p.setRateAndBufferSizeDetails (sr, 512);
+        InstrumentProcessor p;
         p.prepareToPlay (sr, 512);
-        juce::AudioBuffer<float> buf (2, 512);
-        for (int k = 0; k < 200; ++k)
-        {
-            for (int i = 0; i < 512; ++i)
-            {
-                const float x = 0.4f * std::sin ((float) (k * 512 + i) * 0.03f) + 0.2f * std::sin ((float) (k * 512 + i) * 0.11f);
-                buf.setSample (0, i, x); buf.setSample (1, i, x);
-            }
-            juce::MidiBuffer m;
-            p.processBlock (buf, m);
-        }
-        for (int i = 0; i < 3; ++i) p.spark();
-        p.setLocked (FxProcessor::mix, true);
+        p.loadChain (10); // Shimmer Cloud
+        p.apvts.getParameter ("fxDelayOn")->setValueNotifyingHost (1.0f);
+        p.setModuleLocked ("grain", true);
         std::unique_ptr<juce::AudioProcessorEditor> ed (p.createEditor());
-        snapshot (ed.get(), outDir.getChildFile ("ui-fx.png"));
-        p.loadPreset (60);
-        for (auto* c : ed->getChildren()[0]->getChildren())
-            if (auto* b = dynamic_cast<PresetBrowser*> (c))
-            {
-                b->setVisible (true);
-                b->toFront (false);
-            }
-        snapshot (ed.get(), outDir.getChildFile ("ui-fx-browser.png"));
-        check (true, "FX editor snapshot written");
+        if (auto* ie = dynamic_cast<InstrumentEditor*> (ed.get()))
+            ie->showPage (1);
+        snapshot (ed.get(), outDir.getChildFile ("ui-fx-page.png"));
+        check (true, "FX page snapshot written");
         ed.reset();
     }
 

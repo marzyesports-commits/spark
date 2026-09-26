@@ -2,6 +2,7 @@
 #include "InstrumentEditor.h"
 #include "SparkVoice.h"
 #include "Common/Presets.h"
+#include "Shapeshift.h"
 
 namespace spark
 {
@@ -27,7 +28,11 @@ namespace
         auto pctAttr = juce::AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return fmt::percent (v); });
         juce::NormalisableRange<float> unit (0.0f, 1.0f);
 
-        layout.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "mode", 1 }, "Engine", juce::StringArray { "Grain", "Table" }, 0));
+        layout.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "mode", 1 }, "Engine", juce::StringArray { "Grain", "Table", "Sample" }, 0));
+        // Morph scan: sweeps the wavetable from Morph to the last frame over this time on every note (0 = off).
+        layout.add (std::make_unique<juce::AudioParameterFloat> (juce::ParameterID { "scanTime", 1 }, "Morph Scan", unit, 0.0f,
+            juce::AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return v <= 0.001f ? juce::String ("Off") : fmt::envTime (v); })));
+        FxRack::addParameters (layout);
         juce::NormalisableRange<float> bipolar (-1.0f, 1.0f);
         auto curveAttr = juce::AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return fmt::curve (v); });
         auto octAttr = juce::AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return fmt::octaves (v); });
@@ -104,6 +109,8 @@ InstrumentProcessor::InstrumentProcessor()
     params.toneAmount = apvts.getRawParameterValue ("toneAmount");
     params.toneVelocity = apvts.getRawParameterValue ("toneVelocity");
     params.level = apvts.getRawParameterValue ("level");
+    params.scanTime = apvts.getRawParameterValue ("scanTime");
+    rack.attach (apvts);
 
     installSource (makeBuiltInSource());
 
@@ -263,8 +270,94 @@ bool InstrumentProcessor::loadFile (const juce::File& file, juce::String& error)
 
     auto s = makeSource (std::move (audio), reader->sampleRate > 0 ? reader->sampleRate : 44100.0, file.getFileName(), file,
                          looksLikeTable ? (clmFrame > 0 ? clmFrame : Wavetable::frameSize) : 0);
+    if (! looksLikeTable)
+        if (const float midi = shapeshift::detectMidiNote (s->audio, s->sampleRate); midi > 0.0f)
+            s->rootNote = midi; // pitched samples play in tune across the keyboard
     installSource (s);
-    setParam ("mode", looksLikeTable ? 1.0f : 0.0f);
+    setMode (looksLikeTable ? tableMode : grainMode);
+    return true;
+}
+
+bool InstrumentProcessor::shapeshift (const juce::File& file, juce::String& summary)
+{
+    juce::AudioBuffer<float> audio;
+    double sampleRate = 44100.0;
+    juce::String name;
+    juce::File origin = file;
+
+    if (file != juce::File())
+    {
+        std::unique_ptr<juce::AudioFormatReader> reader (formats.createReaderFor (file));
+        if (reader == nullptr)
+        {
+            summary = "Spark can't read " + file.getFileName() + ". Try a WAV, AIFF or FLAC file.";
+            return false;
+        }
+        const int len = (int) juce::jmin (reader->lengthInSamples, (juce::int64) (reader->sampleRate * 20.0));
+        audio.setSize ((int) juce::jlimit (1u, 2u, reader->numChannels), len);
+        reader->read (&audio, 0, len, 0, true, audio.getNumChannels() > 1);
+        sampleRate = reader->sampleRate > 0 ? reader->sampleRate : 44100.0;
+        name = file.getFileName();
+    }
+    else
+    {
+        auto current = getSource();
+        if (current == nullptr || current->name == "Spark Init")
+        {
+            summary = "Drop in or choose a sound first: bounce one note from Serum, Serum 2 or Vital as a WAV.";
+            return false;
+        }
+        audio = current->audio;
+        sampleRate = current->sampleRate;
+        name = current->name;
+        origin = current->file;
+    }
+
+    const auto result = shapeshift::analyse (audio, sampleRate);
+    if (! result.ok)
+    {
+        summary = result.error;
+        return false;
+    }
+
+    SourceData::Ptr src (new SourceData());
+    src->audio = std::move (audio);
+    src->sampleRate = sampleRate;
+    src->name = name;
+    src->file = origin;
+    src->rootNote = result.midiNote;
+    src->shapeshifted = true;
+    src->table = Wavetable::fromFrames (result.frames);
+    src->computePeaks();
+    installSource (src);
+
+    // Rebuild the sound with Spark's controls: the table plays through the note's evolution,
+    // the filter is open (the timbre is in the frames), and the envelope matches the original.
+    auto bipolar = [] (float c) { return (juce::jlimit (-1.0f, 1.0f, c) + 1.0f) * 0.5f; };
+    setMode (tableMode);
+    setParam ("scanTime", shapeshift::timeToParam (result.scanSeconds * 0.5f));
+    setParam ("attack", shapeshift::timeToParam (result.attack));
+    setParam ("hold", result.hold > 0.0f ? shapeshift::timeToParam (result.hold) : 0.0f);
+    setParam ("decay", shapeshift::timeToParam (result.decay));
+    setParam ("sustain", result.sustain);
+    setParam ("release", shapeshift::timeToParam (result.release));
+    setParam ("attackCurve", bipolar (result.attackCurve));
+    setParam ("decayCurve", bipolar (result.decayCurve));
+    setParam ("releaseCurve", bipolar (result.releaseCurve));
+    setParam ("toneAmount", 0.5f);
+
+    FacetValues f = currentFacetValues();
+    f[pitch] = 0.5f;
+    f[morph] = 0.0f;
+    f[tone] = 1.0f;
+    f[drive] = 0.0f;
+    f[motion] = juce::jlimit (0.0f, 0.6f, result.width * 0.5f);
+    f[space] = 0.12f;
+    applyFacetValues (f);
+    lineage.push (currentFacetValues(), (juce::uint32) juce::Random::getSystemRandom().nextInt(), currentExtraValues());
+    lastShapeshift = result.summary;
+    summary = result.summary;
+    sendChangeMessage();
     return true;
 }
 
@@ -280,9 +373,10 @@ void InstrumentProcessor::makeTableFromSample()
     s->name = current->name;
     s->file = current->file;
     s->peaks = current->peaks;
+    s->rootNote = current->rootNote;
     s->table = Wavetable::fromSample (s->audio);
     installSource (s);
-    setParam ("mode", 1.0f);
+    setMode (tableMode);
 }
 
 bool InstrumentProcessor::exportTable (const juce::File& file, juce::String& error) const
@@ -344,8 +438,7 @@ void InstrumentProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     currentSampleRate = sampleRate;
     synth.setCurrentPlaybackSampleRate (sampleRate);
 
-    juce::dsp::ProcessSpec spec { sampleRate, (juce::uint32) samplesPerBlock, 2 };
-    reverb.prepare (spec);
+    rack.prepare (sampleRate, samplesPerBlock);
     levelSmooth.reset (sampleRate, 0.03);
     levelSmooth.setCurrentAndTargetValue (juce::Decibels::decibelsToGain (params.level->load()));
 }
@@ -366,21 +459,17 @@ void InstrumentProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
     const int numCh = buffer.getNumChannels();
     levelSmooth.setTargetValue (juce::Decibels::decibelsToGain (params.level->load()));
 
-    // Drive and Tone now run per note inside each voice, so the tone envelope can sweep them.
-    // Space
-    const float spaceAmt = params.facet[space]->load();
-    juce::dsp::Reverb::Parameters rp;
-    rp.roomSize = 0.3f + 0.68f * spaceAmt;
-    rp.damping = 0.45f;
-    rp.wetLevel = spaceAmt * 0.55f;
-    rp.dryLevel = 1.0f - spaceAmt * 0.35f;
-    rp.width = 1.0f;
-    reverb.setParameters (rp);
+    // Drive and Tone run per note inside each voice; then the effects rack (its reverb is the Space facet).
+    double bpm = 120.0, ppq = 0.0;
+    bool playing = false;
+    if (auto* ph = getPlayHead())
+        if (auto pos = ph->getPosition())
+        {
+            if (auto b = pos->getBpm()) bpm = juce::jlimit (30.0, 300.0, *b);
+            if (auto q = pos->getPpqPosition()) { ppq = *q; playing = pos->getIsPlaying(); }
+        }
     if (numCh == 2)
-    {
-        juce::dsp::AudioBlock<float> block (buffer);
-        reverb.process (juce::dsp::ProcessContextReplacing<float> (block));
-    }
+        rack.process (buffer, bpm, ppq, playing, params.facet[space]->load());
 
     // Level, then a transparent safety clipper: untouched below 0.8, rounds off smoothly above
     // so stacked chords or hot samples never hard-clip the DAW's input.
@@ -403,8 +492,80 @@ juce::AudioProcessorEditor* InstrumentProcessor::createEditor()
     return new InstrumentEditor (*this);
 }
 
+void InstrumentProcessor::setMode (Mode m)
+{
+    setParam ("mode", (float) m / 2.0f);
+}
+
+bool InstrumentProcessor::isModuleLocked (const juce::String& id) const
+{
+    const juce::ScopedLock sl (lockLock);
+    return lockedModules.contains (id);
+}
+
+void InstrumentProcessor::setModuleLocked (const juce::String& id, bool locked)
+{
+    {
+        const juce::ScopedLock sl (lockLock);
+        if (locked) lockedModules.addIfNotAlreadyThere (id); else lockedModules.removeString (id);
+    }
+    sendChangeMessage();
+}
+
+std::vector<juce::RangedAudioParameter*> InstrumentProcessor::getRandomisableExtras() const
+{
+    // Effects that are switched on and not locked. The Space facet is already a facet, so it's skipped here.
+    std::vector<juce::RangedAudioParameter*> out;
+    for (const auto& m : FxRack::modules())
+    {
+        if (apvts.getRawParameterValue (m.onParam)->load() < 0.5f || isModuleLocked (m.id))
+            continue;
+        for (const auto& id : m.params)
+            if (id != "space")
+                out.push_back (apvts.getParameter (id));
+    }
+    return out;
+}
+
+void InstrumentProcessor::sparkEffects()
+{
+    const auto seed = (juce::uint32) juce::Random::getSystemRandom().nextInt();
+    const auto extras = Lineage::rollExtras (currentExtraValues(), seed, 1.0f, chaosParam().getValue());
+    lineage.push (currentFacetValues(), seed, extras);
+    applyExtraValues (extras);
+    sendChangeMessage();
+}
+
+void InstrumentProcessor::loadChain (int index)
+{
+    const auto& chains = FxRack::chains();
+    if (! juce::isPositiveAndBelow (index, (int) chains.size()))
+        return;
+    const auto& chain = chains[(size_t) index];
+    for (const auto& m : FxRack::modules())
+    {
+        juce::StringArray ids (m.params);
+        ids.add (m.onParam);
+        for (const auto& id : ids)
+        {
+            if (id == "space") continue;
+            auto* prm = apvts.getParameter (id);
+            const auto it = chain.values.find (id);
+            setParam (id, it != chain.values.end() ? prm->convertTo0to1 (it->second) : prm->getDefaultValue());
+        }
+    }
+    chainName = chain.name;
+    sendChangeMessage();
+}
+
 void InstrumentProcessor::writeExtraState (juce::ValueTree& extra)
 {
+    {
+        const juce::ScopedLock sl (lockLock);
+        extra.setProperty ("fxLocks", lockedModules.joinIntoString (","), nullptr);
+    }
+    extra.setProperty ("chain", chainName, nullptr);
+
     auto s = getSource();
     if (s == nullptr || s->name == "Spark Init")
         return;
@@ -412,12 +573,21 @@ void InstrumentProcessor::writeExtraState (juce::ValueTree& extra)
     extra.setProperty ("sourceName", s->name, nullptr);
     extra.setProperty ("sourceFile", s->file.getFullPathName(), nullptr);
     extra.setProperty ("tableFrame", s->tableFrameLength, nullptr);
+    extra.setProperty ("rootNote", (double) s->rootNote, nullptr);
+    extra.setProperty ("shapeshift", s->shapeshifted, nullptr);
     // The sound itself travels with the project (lossless FLAC), so sessions open on any computer.
     extra.setProperty ("sourceAudio", s->getEmbeddedAudio(), nullptr);
 }
 
 void InstrumentProcessor::readExtraState (const juce::ValueTree& extra)
 {
+    {
+        const juce::ScopedLock sl (lockLock);
+        lockedModules = juce::StringArray::fromTokens (extra.getProperty ("fxLocks").toString(), ",", "");
+        lockedModules.removeEmptyStrings();
+    }
+    chainName = extra.getProperty ("chain", "Clean").toString();
+
     const auto embedded = extra.getProperty ("sourceAudio").toString();
     const juce::File file (extra.getProperty ("sourceFile").toString());
 
@@ -435,6 +605,17 @@ void InstrumentProcessor::readExtraState (const juce::ValueTree& extra)
                 reader->read (&audio, 0, audio.getNumSamples(), 0, true, audio.getNumChannels() > 1);
                 auto s = makeSource (std::move (audio), reader->sampleRate, extra.getProperty ("sourceName").toString(),
                                      file, (int) extra.getProperty ("tableFrame", 0));
+                s->rootNote = (float) (double) extra.getProperty ("rootNote", 60.0);
+                if ((bool) extra.getProperty ("shapeshift", false))
+                {
+                    // Shapeshift is deterministic, so the same frames come back from the saved audio
+                    const auto result = shapeshift::analyse (s->audio, s->sampleRate);
+                    if (result.ok)
+                    {
+                        s->table = Wavetable::fromFrames (result.frames);
+                        s->shapeshifted = true;
+                    }
+                }
                 installSource (s);
                 return;
             }
