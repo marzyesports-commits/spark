@@ -1432,6 +1432,23 @@ int main (int argc, char** argv)
         p.apvts.getParameter ("fxDelayOn")->setValueNotifyingHost (1.0f);
         p.setModuleLocked ("grain", true);
         std::unique_ptr<juce::AudioProcessorEditor> ed (p.createEditor());
+        {
+            // switching effects while the page is open: switches and cards must agree
+            std::vector<PowerSwitch*> switches;
+            std::function<void (juce::Component*)> collect = [&] (juce::Component* c)
+            {
+                if (auto* sw = dynamic_cast<PowerSwitch*> (c)) switches.push_back (sw);
+                for (auto* ch : c->getChildren()) collect (ch);
+            };
+            collect (ed.get());
+            p.apvts.getParameter ("fxChorusOn")->setValueNotifyingHost (1.0f);
+            p.apvts.getParameter ("fxDelayOn")->setValueNotifyingHost (0.0f);
+            bool agree = switches.size() == FxRack::modules().size();
+            for (size_t i = 0; agree && i < switches.size(); ++i)
+                agree = switches[i]->isShownOn() == (p.apvts.getParameter (FxRack::modules()[i].onParam)->getValue() > 0.5f);
+            check (agree, "FX switches show the right state right after a change");
+            p.apvts.getParameter ("fxDelayOn")->setValueNotifyingHost (1.0f);
+        }
         if (auto* ie = dynamic_cast<InstrumentEditor*> (ed.get()))
             ie->showPage (2);
         snapshot (ed.get(), outDir.getChildFile ("ui-fx-page.png"));

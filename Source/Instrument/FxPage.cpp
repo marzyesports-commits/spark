@@ -134,7 +134,8 @@ ModuleCard::~ModuleCard() { processor.removeChangeListener (this); }
 
 bool ModuleCard::isOn() const
 {
-    return processor.apvts.getRawParameterValue (info.onParam)->load() > 0.5f;
+    // Read the parameter itself: its raw value can still be stale while listeners are being told about a change
+    return processor.apvts.getParameter (info.onParam)->getValue() > 0.5f;
 }
 
 void ModuleCard::refresh()

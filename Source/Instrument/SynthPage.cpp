@@ -253,10 +253,16 @@ LfoCard::LfoCard (InstrumentProcessor& p, int l)
 
 void LfoCard::refresh()
 {
-    shapeButton.setButtonText (mod::shapeNames()[juce::roundToInt (processor.modParams.shape[lfo]->load())]);
-    const bool synced = processor.modParams.sync[lfo]->load() > 0.5f;
+    // read the parameters themselves (raw values can lag behind while listeners are called)
+    auto value = [this] (const char* what)
+    {
+        auto* p = processor.apvts.getParameter (mod::lfoParam (lfo, what));
+        return p->convertFrom0to1 (p->getValue());
+    };
+    shapeButton.setButtonText (mod::shapeNames()[juce::roundToInt (value ("Shape"))]);
+    const bool synced = value ("Sync") > 0.5f;
     syncButton.setToggleState (synced, juce::dontSendNotification);
-    retrigButton.setToggleState (processor.modParams.retrig[lfo]->load() > 0.5f, juce::dontSendNotification);
+    retrigButton.setToggleState (value ("Retrig") > 0.5f, juce::dontSendNotification);
     rate.setVisible (! synced);
     division.setVisible (synced);
     repaint();

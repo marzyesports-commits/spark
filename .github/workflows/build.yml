@@ -11,7 +11,7 @@ permissions:
   contents: write   # lets successful main builds publish a GitHub Release
 
 env:
-  VERSION: 1.4.1   # a "-dev" version builds and tests but doesn't publish a release
+  VERSION: 1.4.2   # a "-dev" version builds and tests but doesn't publish a release
 
 jobs:
   macos:

@@ -2,6 +2,15 @@
 
 namespace spark
 {
+// The core's animation clock. Offline renders (the video tool) compile with SPARK_VIDEO_CLOCK to drive it
+// from video time; the plugin always uses the real clock.
+#ifdef SPARK_VIDEO_CLOCK
+double sparkVideoClockMs();
+static double sparkNowMs() { return sparkVideoClockMs(); }
+#else
+static double sparkNowMs() { return juce::Time::getMillisecondCounterHiRes(); }
+#endif
+
 bool isModDrag (const juce::DragAndDropTarget::SourceDetails& d)
 {
     return d.description.toString().startsWith ("mod:");
@@ -375,7 +384,7 @@ CoreView::CoreView (SparkProcessorBase& p) : processor (p)
     shown = target;
     for (int i = 0; i < numFacets; ++i)
         lastFacet[(size_t) i] = processor.facetParam (i).getValue();
-    lastTick = juce::Time::getMillisecondCounterHiRes();
+    lastTick = sparkNowMs();
     startTimerHz (60);
 }
 
@@ -396,7 +405,7 @@ void CoreView::changeListenerCallback (juce::ChangeBroadcaster*)
 
 void CoreView::timerCallback()
 {
-    const double now = juce::Time::getMillisecondCounterHiRes();
+    const double now = sparkNowMs();
     const float dt = (float) juce::jlimit (0.001, 0.1, (now - lastTick) * 0.001);
     lastTick = now;
 
@@ -555,7 +564,7 @@ void CoreView::spawnBolt (juce::Point<float> from, juce::Point<float> to, float 
 }
 
 void CoreView::burst()
-{    const double now = juce::Time::getMillisecondCounterHiRes();
+{    const double now = sparkNowMs();
     if (now - lastBurst < 350.0)
         return;   // the button press and the facet jump it causes are one event
     lastBurst = now;

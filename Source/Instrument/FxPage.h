@@ -12,6 +12,7 @@ class PowerSwitch : public juce::Component,
 public:
     PowerSwitch() { setMouseCursor (juce::MouseCursor::PointingHandCursor); }
     void setOn (bool);
+    bool isShownOn() const noexcept { return on; }
     std::function<void()> onClick;
     void paint (juce::Graphics&) override;
     void mouseUp (const juce::MouseEvent& e) override { if (e.mouseWasClicked() && onClick) onClick(); }
