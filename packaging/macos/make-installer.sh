@@ -44,10 +44,10 @@ make_component() {
     done
     # Stop Installer "relocating" bundles to wherever an older copy lives.
     pkgbuild --analyze --root "$root" "$STAGE/$id.plist" >/dev/null
-    local count
-    count=$(/usr/libexec/PlistBuddy -c "Print" "$STAGE/$id.plist" | grep -c "RootRelativeBundlePath" || true)
-    for ((i = 0; i < count; i++)); do
+    local i=0
+    while /usr/libexec/PlistBuddy -c "Print :$i:RootRelativeBundlePath" "$STAGE/$id.plist" >/dev/null 2>&1; do
         /usr/libexec/PlistBuddy -c "Set :$i:BundleIsRelocatable false" "$STAGE/$id.plist"
+        i=$((i + 1))
     done
     pkgbuild --root "$root" --component-plist "$STAGE/$id.plist" \
              --identifier "com.sparkaudio.spark.$id" --version "$VERSION" \
