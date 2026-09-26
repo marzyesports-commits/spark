@@ -3,6 +3,7 @@
 #include "Common/Components.h"
 #include "InstrumentProcessor.h"
 #include "FxPage.h"
+#include "SynthPage.h"
 
 namespace spark
 {
@@ -135,7 +136,7 @@ public:
     void fileDragExit (const juce::StringArray&) override { source.setDragHover (false); }
     void filesDropped (const juce::StringArray&, int, int) override;
 
-    // 0 = Sound, 1 = FX
+    // 0 = Sound, 1 = Synth, 2 = FX
     void showPage (int page);
 
 protected:
@@ -153,6 +154,7 @@ private:
     SourcePanel source;
     ShapePanel shape;
     ShapeEditor shapeEditor;
+    SynthPage synthPage;
     FxPage fxPage;
     std::unique_ptr<juce::FileChooser> chooser;
 };

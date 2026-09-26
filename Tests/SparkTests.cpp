@@ -823,8 +823,15 @@ int main (int argc, char** argv)
         p.setModuleLocked ("grain", true);
         std::unique_ptr<juce::AudioProcessorEditor> ed (p.createEditor());
         if (auto* ie = dynamic_cast<InstrumentEditor*> (ed.get()))
-            ie->showPage (1);
+            ie->showPage (2);
         snapshot (ed.get(), outDir.getChildFile ("ui-fx-page.png"));
+        p.apvts.getParameter ("filterType")->setValueNotifyingHost (1.0f / 3.0f);
+        p.apvts.getParameter ("resonance")->setValueNotifyingHost (0.45f);
+        p.apvts.getParameter ("voiceMode")->setValueNotifyingHost (0.5f);
+        p.apvts.getParameter ("glide")->setValueNotifyingHost (0.3f);
+        if (auto* ie = dynamic_cast<InstrumentEditor*> (ed.get()))
+            ie->showPage (1);
+        snapshot (ed.get(), outDir.getChildFile ("ui-synth-page.png"));
         check (true, "FX page snapshot written");
         ed.reset();
     }

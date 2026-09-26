@@ -55,6 +55,18 @@ namespace
         layout.add (std::make_unique<juce::AudioParameterFloat> (juce::ParameterID { "ampVelocity", 1 }, "Velocity to Amp", unit, 0.75f, pctAttr));
         layout.add (std::make_unique<juce::AudioParameterFloat> (juce::ParameterID { "toneAmount", 1 }, "Tone Envelope Amount", bipolar, 0.0f, octAttr));
         layout.add (std::make_unique<juce::AudioParameterFloat> (juce::ParameterID { "toneVelocity", 1 }, "Velocity to Tone Envelope", unit, 0.0f, pctAttr));
+        // ---- Play: voice mode, glide, pitch-bend range
+        layout.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "voiceMode", 1 }, "Voice Mode",
+                                                                  juce::StringArray { "Poly", "Mono", "Legato" }, 0));
+        layout.add (std::make_unique<juce::AudioParameterFloat> (juce::ParameterID { "glide", 1 }, "Glide", unit, 0.0f,
+            juce::AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return fmt::glideTime (v); })));
+        layout.add (std::make_unique<juce::AudioParameterInt> (juce::ParameterID { "bendRange", 1 }, "Pitch Bend Range", 0, 24, 2,
+            juce::AudioParameterIntAttributes().withStringFromValueFunction ([] (int v, int) { return juce::String (v) + " st"; })));
+        // ---- Filter: type, resonance, key tracking (cutoff is the Tone facet)
+        layout.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "filterType", 1 }, "Filter Type",
+                                                                  juce::StringArray { "Low-pass", "High-pass", "Band-pass", "Notch" }, 0));
+        layout.add (std::make_unique<juce::AudioParameterFloat> (juce::ParameterID { "resonance", 1 }, "Resonance", unit, 0.1f, pctAttr));
+        layout.add (std::make_unique<juce::AudioParameterFloat> (juce::ParameterID { "keyTrack", 1 }, "Filter Key Tracking", unit, 0.0f, pctAttr));
         layout.add (std::make_unique<juce::AudioParameterFloat> (juce::ParameterID { "level", 1 }, "Level",
                                                                  juce::NormalisableRange<float> (-24.0f, 6.0f, 0.1f), -3.0f,
                                                                  juce::AudioParameterFloatAttributes().withLabel ("dB")));
@@ -84,7 +96,8 @@ void SourceData::computePeaks()
 
 InstrumentProcessor::InstrumentProcessor()
     : SparkProcessorBase (BusesProperties().withOutput ("Output", juce::AudioChannelSet::stereo(), true),
-                          instrumentFacets(), addInstrumentParameters, makeInstrumentPresets(), "instrument")
+                          instrumentFacets(), addInstrumentParameters, makeInstrumentPresets(), "instrument"),
+      synth (*this)
 {
     formats.registerBasicFormats();
 
@@ -110,6 +123,12 @@ InstrumentProcessor::InstrumentProcessor()
     params.toneVelocity = apvts.getRawParameterValue ("toneVelocity");
     params.level = apvts.getRawParameterValue ("level");
     params.scanTime = apvts.getRawParameterValue ("scanTime");
+    params.voiceMode = apvts.getRawParameterValue ("voiceMode");
+    params.glide = apvts.getRawParameterValue ("glide");
+    params.bendRange = apvts.getRawParameterValue ("bendRange");
+    params.filterType = apvts.getRawParameterValue ("filterType");
+    params.resonance = apvts.getRawParameterValue ("resonance");
+    params.keyTrack = apvts.getRawParameterValue ("keyTrack");
     rack.attach (apvts);
 
     installSource (makeBuiltInSource());

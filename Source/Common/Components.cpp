@@ -157,16 +157,18 @@ Header::Header (SparkProcessorBase& p, bool isFx) : processor (p), fx (isFx)
     prev.setTooltip ("Previous preset");
     next.setTooltip ("Next preset");
     settings.setTooltip ("Menu");
-    for (auto* b : { &soundTab, &fxTab })
+    for (auto* b : { &soundTab, &synthTab, &fxTab })
     {
         addAndMakeVisible (b);
         b->setFontHeight (11.0f);
         b->setLetterSpacing (0.14f);
     }
     soundTab.setTooltip ("The sound: source, shape, facets");
+    synthTab.setTooltip ("Filter, voice mode and glide");
     fxTab.setTooltip ("The effects rack");
     soundTab.onClick = [this] { setPage (0); if (onPage) onPage (0); };
-    fxTab.onClick = [this] { setPage (1); if (onPage) onPage (1); };
+    synthTab.onClick = [this] { setPage (1); if (onPage) onPage (1); };
+    fxTab.onClick = [this] { setPage (2); if (onPage) onPage (2); };
     setPage (0);
     prev.onClick = [this] { processor.loadPreset (processor.getPresetIndex() - 1); };
     next.onClick = [this] { processor.loadPreset (processor.getPresetIndex() + 1); };
@@ -183,10 +185,11 @@ void Header::resized()
     prev.setBounds (presetArea.getX() + 4, presetArea.getY() + 4, 36, 36);
     next.setBounds (presetArea.getRight() - 40, presetArea.getY() + 4, 36, 36);
     settings.setBounds (b.getRight() - 44, b.getCentreY() - 22, 44, 44);
-    kindArea = juce::Rectangle<int> (150, 40).withCentre ({ 0, b.getCentreY() });
+    kindArea = juce::Rectangle<int> (222, 40).withCentre ({ 0, b.getCentreY() });
     kindArea.setX (settings.getX() - 12 - kindArea.getWidth());
-    soundTab.setBounds (kindArea.getX() + 3, kindArea.getY() + 3, 84, 34);
-    fxTab.setBounds (soundTab.getRight(), kindArea.getY() + 3, kindArea.getRight() - 3 - soundTab.getRight(), 34);
+    soundTab.setBounds (kindArea.getX() + 3, kindArea.getY() + 3, 80, 34);
+    synthTab.setBounds (soundTab.getRight(), kindArea.getY() + 3, 80, 34);
+    fxTab.setBounds (synthTab.getRight(), kindArea.getY() + 3, kindArea.getRight() - 3 - synthTab.getRight(), 34);
 }
 
 void Header::paint (juce::Graphics& g)
@@ -249,7 +252,8 @@ void Header::paint (juce::Graphics& g)
 void Header::setPage (int page)
 {
     soundTab.setToggleState (page == 0, juce::dontSendNotification);
-    fxTab.setToggleState (page == 1, juce::dontSendNotification);
+    synthTab.setToggleState (page == 1, juce::dontSendNotification);
+    fxTab.setToggleState (page == 2, juce::dontSendNotification);
 }
 
 void Header::mouseMove (const juce::MouseEvent& e)

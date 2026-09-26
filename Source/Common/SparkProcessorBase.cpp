@@ -43,6 +43,16 @@ namespace fmt
         const float s = envSeconds (v);
         return s >= 1.0f ? juce::String (s, 2) + " s" : juce::String (juce::roundToInt (s * 1000.0f)) + " ms";
     }
+
+    float glideSeconds (float v) { return 2.0f * v * v; }
+    float filterQ (float resonance) { return 0.85f * std::pow (15.0f, juce::jlimit (0.0f, 1.0f, resonance) - 0.1f); }
+
+    juce::String glideTime (float v)
+    {
+        const float s = glideSeconds (v);
+        if (s < 0.001f) return "Off";
+        return s >= 1.0f ? juce::String (s, 2) + " s" : juce::String (juce::roundToInt (s * 1000.0f)) + " ms";
+    }
 }
 
 SparkProcessorBase::Layout SparkProcessorBase::buildLayout (const std::vector<FacetSpec>& facets,

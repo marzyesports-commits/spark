@@ -41,7 +41,7 @@ public:
     ~Header() override;
     std::function<void (juce::Component& anchor)> onSettings;
     std::function<void()> onBrowse;
-    std::function<void (int page)> onPage;   // 0 = SOUND, 1 = FX
+    std::function<void (int page)> onPage;   // 0 = SOUND, 1 = SYNTH, 2 = FX
     void setPage (int page);
 
     void paint (juce::Graphics&) override;
@@ -60,6 +60,7 @@ private:
     PillButton next { {}, PillButton::Style::ghost, Icon::chevronRight };
     PillButton settings { {}, PillButton::Style::outline, Icon::settings };
     PillButton soundTab { "SOUND", PillButton::Style::segment };
+    PillButton synthTab { "SYNTH", PillButton::Style::segment };
     PillButton fxTab { "FX", PillButton::Style::segment };
     juce::Rectangle<int> presetArea, kindArea;
 };

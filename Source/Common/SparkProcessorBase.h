@@ -48,11 +48,14 @@ namespace fmt
     juce::String envTime (float v);     // 1 ms .. 5 s
     juce::String curve (float v);       // -1..1
     juce::String octaves (float v);     // -1..1 = -5..+5 octaves
+    juce::String glideTime (float v);   // Off, then up to 2 s
 
     float cutoffHz (float v);
     float grainSeconds (float v);
     float envSeconds (float v);
     float semitoneValue (float v);
+    float glideSeconds (float v);       // 0..1 -> 0..2 s (squared, so short glides get most of the travel)
+    float filterQ (float resonance);    // 0..1 -> Q 0.65..9.4 (0.1 = 0.85, the classic Spark filter)
 }
 
 // Everything the two Spark plugins share: facet parameters, locks, the lineage

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(Spark VERSION 1.3.1 LANGUAGES C CXX)
+project(Spark VERSION 1.4.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -93,6 +93,7 @@ target_sources(Spark PRIVATE
     Source/Instrument/InstrumentProcessor.cpp
     Source/Instrument/InstrumentEditor.cpp
     Source/Instrument/FxPage.cpp
+    Source/Instrument/SynthPage.cpp
     Source/Instrument/SparkVoice.cpp)
 spark_configure(Spark)
 
@@ -105,6 +106,7 @@ if(SPARK_BUILD_TESTS)
         Source/Instrument/InstrumentProcessor.cpp
         Source/Instrument/InstrumentEditor.cpp
         Source/Instrument/FxPage.cpp
+        Source/Instrument/SynthPage.cpp
         Source/Instrument/SparkVoice.cpp
         ${SPARK_COMMON_SOURCES})
     target_include_directories(SparkTests PRIVATE Source)

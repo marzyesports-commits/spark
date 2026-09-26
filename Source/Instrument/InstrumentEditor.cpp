@@ -623,7 +623,7 @@ bool ShapeEditor::keyPressed (const juce::KeyPress& k)
 
 // =====================================================================================
 InstrumentEditor::InstrumentEditor (InstrumentProcessor& p)
-    : SparkEditorBase (p, false), processor (p), source (p), shape (p), shapeEditor (p), fxPage (p)
+    : SparkEditorBase (p, false), processor (p), source (p), shape (p), shapeEditor (p), synthPage (p), fxPage (p)
 {
     auto col = leftColumn();
     source.setBounds (col.removeFromTop (252));
@@ -632,6 +632,8 @@ InstrumentEditor::InstrumentEditor (InstrumentProcessor& p)
     content().addAndMakeVisible (source);
     content().addAndMakeVisible (shape);
 
+    content().addChildComponent (synthPage);
+    synthPage.setBounds (24, 86, 1072, 440);
     content().addChildComponent (fxPage);
     fxPage.setBounds (24, 86, 1072, 440);
     getHeader().onPage = [this] (int page) { showPage (page); };
@@ -722,6 +724,7 @@ void InstrumentEditor::exportWavetable()
 void InstrumentEditor::hideOtherOverlays()
 {
     shapeEditor.setVisible (false);
+    synthPage.setVisible (false);
     fxPage.setVisible (false);
     getHeader().setPage (0);
 }
@@ -730,8 +733,10 @@ void InstrumentEditor::showPage (int page)
 {
     setBrowserVisible (false);
     shapeEditor.setVisible (false);
-    fxPage.setVisible (page == 1);
-    if (page == 1) fxPage.toFront (false);
+    synthPage.setVisible (page == 1);
+    fxPage.setVisible (page == 2);
+    if (page == 1) synthPage.toFront (false);
+    if (page == 2) fxPage.toFront (false);
     getHeader().setPage (page);
 }
 

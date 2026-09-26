@@ -35,12 +35,37 @@ private:
     mutable juce::String embedded;
 };
 
+class InstrumentProcessor;
+
+// The synthesiser, with Mono and Legato modes on top of JUCE's polyphonic voice handling.
+// Mono/Legato keep a stack of held keys and move one voice between them (glide, retrigger or not).
+class SparkSynth : public juce::Synthesiser
+{
+public:
+    explicit SparkSynth (InstrumentProcessor& p);
+    void noteOn (int midiChannel, int midiNoteNumber, float velocity) override;
+    void noteOff (int midiChannel, int midiNoteNumber, float velocity, bool allowTailOff) override;
+    void allNotesOff (int midiChannel, bool allowTailOff) override;
+
+private:
+    class SparkVoice* findMonoVoice() const;
+
+    InstrumentProcessor& processor;
+    std::vector<int> held;            // keys down, oldest first (mono modes)
+    std::vector<float> heldVelocity;
+    int soundingNote = -1;            // the note JUCE's voice bookkeeping knows the mono voice by
+    int lastNote = -1;                // most recent key, where glides start from
+    int lastMode = 0;
+};
+
 class InstrumentProcessor : public SparkProcessorBase,
                             private juce::Timer
 {
 public:
     enum Facet { pitch, position, grain, morph, tone, drive, motion, space };
     enum Mode { grainMode = 0, tableMode = 1, sampleMode = 2 };
+    enum VoiceMode { poly = 0, mono = 1, legato = 2 };
+    enum FilterType { lowPass = 0, highPass = 1, bandPass = 2, notch = 3 };
 
     InstrumentProcessor();
     ~InstrumentProcessor() override;
@@ -99,7 +124,16 @@ public:
         std::atomic<float>* toneVelocity = nullptr;
         std::atomic<float>* level = nullptr;
         std::atomic<float>* scanTime = nullptr;
+        std::atomic<float>* voiceMode = nullptr;
+        std::atomic<float>* glide = nullptr;        // 0..1, see fmt::glideSeconds
+        std::atomic<float>* bendRange = nullptr;    // semitones
+        std::atomic<float>* filterType = nullptr;
+        std::atomic<float>* resonance = nullptr;    // 0..1
+        std::atomic<float>* keyTrack = nullptr;     // 0..1
     } params;
+
+    // Audio thread only: the note a new mono voice glides from (-1 = no glide). Set by SparkSynth.
+    int glideFromNote = -1;
 
     // ---- AudioProcessor
     const juce::String getName() const override { return "Spark"; }
@@ -125,7 +159,7 @@ private:
     static SourceData::Ptr makeBuiltInSource();
 
     juce::AudioFormatManager formats;
-    juce::Synthesiser synth;
+    SparkSynth synth;
     std::atomic<float>* modeParam = nullptr;
 
     SourceData::Ptr source;

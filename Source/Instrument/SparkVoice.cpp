@@ -51,18 +51,25 @@ void SparkVoice::setCurrentPlaybackSampleRate (double newRate)
     {
         ampEnv.setSampleRate (newRate);
         toneEnv.setSampleRate (newRate);
-        filter.prepare ({ newRate, (juce::uint32) chunkSize, 2 });
-        filter.setType (juce::dsp::StateVariableTPTFilterType::lowpass);
-        filter.setResonance (0.85f);
+        filter.reset();
     }
 }
 
 void SparkVoice::startNote (int midiNote, float vel, juce::SynthesiserSound*, int pitchWheel)
 {
     source = processor.getSource();
-    note = midiNote;
+    note = targetNote = midiNote;
     velocity = vel;
     pitchWheelMoved (pitchWheel);
+
+    // Mono/Legato hand us the previous key to glide from
+    pitchNote = (float) midiNote;
+    glideLeft = 0;
+    if (processor.glideFromNote >= 0 && processor.glideFromNote != midiNote)
+    {
+        pitchNote = (float) processor.glideFromNote;
+        startGlide();
+    }
 
     for (auto& g : grains) g.active = false;
     samplesToNextGrain = 0.0;
@@ -81,6 +88,33 @@ void SparkVoice::startNote (int midiNote, float vel, juce::SynthesiserSound*, in
     toneEnv.reset();
     ampEnv.noteOn();
     toneEnv.noteOn();
+}
+
+void SparkVoice::startGlide()
+{
+    const float seconds = fmt::glideSeconds (processor.params.glide->load());
+    glideLeft = (int) (seconds * getSampleRate());
+    if (glideLeft <= 0)
+    {
+        pitchNote = (float) targetNote;
+        glideLeft = 0;
+        return;
+    }
+    glideStep = ((float) targetNote - pitchNote) / (float) glideLeft;
+}
+
+void SparkVoice::changeNote (int midiNote, float vel, bool retrigger)
+{
+    targetNote = midiNote;
+    startGlide();
+    if (retrigger)
+    {
+        velocity = vel;
+        samplePos = 0.0;
+        noteSamples = 0.0;
+        ampEnv.noteOn();   // restarts the attack from the current level, so no click
+        toneEnv.noteOn();
+    }
 }
 
 void SparkVoice::stopNote (float, bool allowTailOff)
@@ -111,8 +145,13 @@ void SparkVoice::processChain (float* l, float* r, int n)
     const float octaves = p.toneAmount->load() * 5.0f * (1.0f - velTone * (1.0f - velocity));
 
     const float targetDrive = p.facet[InstrumentProcessor::drive]->load();
-    const float targetCutoff = fmt::cutoffHz (p.facet[InstrumentProcessor::tone]->load());
+    const float keyTrack = p.keyTrack->load();
+    const float targetCutoff = fmt::cutoffHz (p.facet[InstrumentProcessor::tone]->load())
+                             * std::exp2 ((pitchNote - 60.0f) / 12.0f * keyTrack);
     const float nyquistSafe = (float) getSampleRate() * 0.45f;
+    const float q = fmt::filterQ (p.resonance->load());
+    const int type = juce::roundToInt (p.filterType->load());
+    const double sr = getSampleRate();
 
     for (int i = 0; i < n; ++i)
     {
@@ -124,20 +163,20 @@ void SparkVoice::processChain (float* l, float* r, int n)
         if ((i & 15) == 0)
         {
             const float hz = baseCutoff * std::exp2 (octaves * te);
-            filter.setCutoffFrequency (juce::jlimit (20.0f, nyquistSafe, hz));
+            filter.set (juce::jlimit (20.0f, nyquistSafe, hz), q, sr);
         }
 
         const float g = 1.0f + driveAmount * 12.0f;
         const float makeup = 1.0f / std::sqrt (g);
         const float env = ampEnv.next (ampSettings) * ampGain;
-        l[i] = filter.processSample (0, std::tanh (g * l[i]) * makeup) * env;
-        r[i] = filter.processSample (1, std::tanh (g * r[i]) * makeup) * env;
+        l[i] = filter.process (0, std::tanh (g * l[i]) * makeup, type) * env;
+        r[i] = filter.process (1, std::tanh (g * r[i]) * makeup, type) * env;
     }
 }
 
 void SparkVoice::pitchWheelMoved (int value)
 {
-    bendSemitones = (float) (value - 8192) / 8192.0f * 2.0f;
+    wheelValue = value;
 }
 
 void SparkVoice::spawnGrain (const SourceData& src, double ratio, float position, float grainSec, float motion, float scan)
@@ -190,6 +229,7 @@ void SparkVoice::renderGrains (float* left, float* right, int n, const SourceDat
         {
             if (! g.active)
                 continue;
+            g.rate = ratio;   // follow glides and bends
             const float w = window.at ((float) g.age / (float) g.length);
             l += readInterp (chL, len, g.pos) * w * g.gainL;
             r += readInterp (chR, len, g.pos) * w * g.gainR;
@@ -279,13 +319,15 @@ void SparkVoice::renderNextBlock (juce::AudioBuffer<float>& out, int startSample
     const bool sampleMode = mode == InstrumentProcessor::sampleMode;
     const float scanSeconds = p.scanTime->load() > 0.001f ? fmt::envSeconds (p.scanTime->load()) * 2.0f : 0.0f;
 
-    const float semis = (float) note - source->rootNote + pitchSt + bendSemitones;
-    const double ratio = std::pow (2.0, semis / 12.0) * (source->sampleRate / getSampleRate());
-    const double baseHz = 440.0 * std::pow (2.0, ((double) note - 69.0 + pitchSt + bendSemitones) / 12.0);
+    const float bendSemitones = (float) (wheelValue - 8192) / 8192.0f * p.bendRange->load();
 
     while (numSamples > 0)
     {
-        const int n = juce::jmin (numSamples, chunkSize);
+        // short chunks while gliding so the pitch moves smoothly
+        const int n = juce::jmin (numSamples, glideLeft > 0 ? 32 : chunkSize);
+        const float semis = pitchNote - source->rootNote + pitchSt + bendSemitones;
+        const double ratio = std::pow (2.0, semis / 12.0) * (source->sampleRate / getSampleRate());
+        const double baseHz = 440.0 * std::pow (2.0, ((double) pitchNote - 69.0 + pitchSt + bendSemitones) / 12.0);
         float* l = scratch.getWritePointer (0);
         float* r = scratch.getWritePointer (1);
 
@@ -308,6 +350,14 @@ void SparkVoice::renderNextBlock (juce::AudioBuffer<float>& out, int startSample
 
         processChain (l, r, n);
 
+        if (glideLeft > 0)
+        {
+            const int step = juce::jmin (n, glideLeft);
+            pitchNote += glideStep * (float) step;
+            glideLeft -= step;
+            if (glideLeft <= 0) pitchNote = (float) targetNote;
+        }
+
         out.addFrom (0, startSample, l, n);
         if (out.getNumChannels() > 1)
             out.addFrom (1, startSample, r, n);
@@ -321,5 +371,100 @@ void SparkVoice::renderNextBlock (juce::AudioBuffer<float>& out, int startSample
             break;
         }
     }
+}
+} // namespace spark
+
+namespace spark
+{
+// ================================================================================ SparkSynth
+SparkSynth::SparkSynth (InstrumentProcessor& p) : processor (p)
+{
+    held.reserve (128);
+    heldVelocity.reserve (128);
+}
+
+SparkVoice* SparkSynth::findMonoVoice() const
+{
+    for (auto* v : voices)
+        if (v->isVoiceActive() && v->getCurrentlyPlayingNote() == soundingNote && v->isKeyDown())
+            return dynamic_cast<SparkVoice*> (v);
+    return nullptr;
+}
+
+void SparkSynth::noteOn (int channel, int midiNote, float velocity)
+{
+    const int mode = juce::roundToInt (processor.params.voiceMode->load());
+    if (mode != lastMode)
+    {
+        held.clear();
+        heldVelocity.clear();
+        lastMode = mode;
+    }
+
+    if (mode == InstrumentProcessor::poly)
+    {
+        processor.glideFromNote = -1;
+        Synthesiser::noteOn (channel, midiNote, velocity);
+        lastNote = midiNote;
+        return;
+    }
+
+    for (size_t i = 0; i < held.size(); ++i)
+        if (held[i] == midiNote) { held.erase (held.begin() + (long) i); heldVelocity.erase (heldVelocity.begin() + (long) i); break; }
+    const bool overlapping = ! held.empty();
+    held.push_back (midiNote);
+    heldVelocity.push_back (velocity);
+
+    if (overlapping)
+        if (auto* v = findMonoVoice())
+        {
+            v->changeNote (midiNote, velocity, mode == InstrumentProcessor::mono);
+            lastNote = midiNote;
+            return;
+        }
+
+    // A fresh note. Mono glides from the last key even when detached; Legato only glides between overlapping keys.
+    processor.glideFromNote = (mode == InstrumentProcessor::mono && lastNote >= 0) ? lastNote : -1;
+    // Only one note sounds in the mono modes: let any other held voice go.
+    for (auto* v : voices)
+        if (v->isVoiceActive() && v->isKeyDown())
+            stopVoice (v, 0.0f, true);
+    Synthesiser::noteOn (channel, midiNote, velocity);
+    processor.glideFromNote = -1;
+    soundingNote = midiNote;
+    lastNote = midiNote;
+}
+
+void SparkSynth::noteOff (int channel, int midiNote, float velocity, bool allowTailOff)
+{
+    const int mode = juce::roundToInt (processor.params.voiceMode->load());
+    if (mode == InstrumentProcessor::poly || mode != lastMode)
+    {
+        Synthesiser::noteOff (channel, midiNote, velocity, allowTailOff);
+        return;
+    }
+
+    for (size_t i = 0; i < held.size(); ++i)
+        if (held[i] == midiNote) { held.erase (held.begin() + (long) i); heldVelocity.erase (heldVelocity.begin() + (long) i); break; }
+
+    auto* v = findMonoVoice();
+    if (held.empty())
+    {
+        Synthesiser::noteOff (channel, soundingNote, velocity, allowTailOff);
+        return;
+    }
+    // Still holding other keys: go back to the most recent one if we released the note that was playing
+    if (v != nullptr && v->getTargetNote() == midiNote)
+    {
+        v->changeNote (held.back(), heldVelocity.back(), mode == InstrumentProcessor::mono);
+        lastNote = held.back();
+    }
+}
+
+void SparkSynth::allNotesOff (int channel, bool allowTailOff)
+{
+    held.clear();
+    heldVelocity.clear();
+    Synthesiser::allNotesOff (channel, allowTailOff);
 }
 } // namespace spark
