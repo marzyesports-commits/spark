@@ -941,7 +941,7 @@ ValueBox::ValueBox (juce::RangedAudioParameter& p, const juce::String& l, const 
       attachment (p, [this] (float) { repaint(); }),
       label (l)
 {
-    setTooltip (tip.isNotEmpty() ? tip + ". Drag up or down, Shift for fine, double-click to reset." : juce::String());
+    setTooltip (tip.isNotEmpty() ? tip + ". Drag up or down (Shift for fine), double-click to type a value, Alt-click to reset." : juce::String());
     setTitle (l);
     setMouseCursor (juce::MouseCursor::UpDownResizeCursor);
 }
@@ -967,8 +967,13 @@ void ValueBox::paint (juce::Graphics& g)
     g.drawText (param.getCurrentValueAsText(), bottom.translated (0.0f, -1.0f), juce::Justification::centred, false);
 }
 
-void ValueBox::mouseDown (const juce::MouseEvent&)
+void ValueBox::mouseDown (const juce::MouseEvent& e)
 {
+    if (e.mods.isAltDown())
+    {
+        attachment.setValueAsCompleteGesture (param.convertFrom0to1 (param.getDefaultValue()));
+        return;
+    }
     dragStart = param.getValue();
     dragging = true;
     attachment.beginGesture();
@@ -984,6 +989,8 @@ void ValueBox::mouseDrag (const juce::MouseEvent& e)
 
 void ValueBox::mouseUp (const juce::MouseEvent&)
 {
+    if (! dragging)
+        return;
     attachment.endGesture();
     dragging = false;
     repaint();
@@ -991,7 +998,134 @@ void ValueBox::mouseUp (const juce::MouseEvent&)
 
 void ValueBox::mouseDoubleClick (const juce::MouseEvent&)
 {
-    attachment.setValueAsCompleteGesture (param.convertFrom0to1 (param.getDefaultValue()));
+    startTyping();
+}
+
+void ValueBox::startTyping()
+{
+    using namespace colours;
+    editor = std::make_unique<juce::TextEditor>();
+    auto& ed = *editor;
+    ed.setFont (fonts::mono (12.0f));
+    ed.setJustification (juce::Justification::centred);
+    ed.setColour (juce::TextEditor::backgroundColourId, selected);
+    ed.setColour (juce::TextEditor::textColourId, text);
+    ed.setColour (juce::TextEditor::outlineColourId, gold);
+    ed.setColour (juce::TextEditor::focusedOutlineColourId, gold);
+    ed.setColour (juce::TextEditor::highlightColourId, gold.withAlpha (0.35f));
+    ed.setColour (juce::CaretComponent::caretColourId, gold);
+    ed.setText (param.getCurrentValueAsText(), false);
+    ed.selectAll();
+    ed.onReturnKey = [this] { finishTyping (true); };
+    ed.onEscapeKey = [this] { finishTyping (false); };
+    ed.onFocusLost = [this] { finishTyping (true); };
+    addAndMakeVisible (ed);
+    ed.setBounds (getLocalBounds().withTrimmedTop (getHeight() * 2 / 5).reduced (2, 1));
+    ed.grabKeyboardFocus();
+}
+
+void ValueBox::finishTyping (bool commit)
+{
+    if (editor == nullptr)
+        return;
+    const auto typed = editor->getText();
+    // delete after the callback that got us here has returned
+    juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<ValueBox> (this)]
+    {
+        if (safe != nullptr) safe->editor.reset();
+    });
+    editor->setVisible (false);
+    if (commit)
+    {
+        const float v = parseTypedValue (param, typed);
+        if (v >= 0.0f)
+            attachment.setValueAsCompleteGesture (param.convertFrom0to1 (v));
+    }
+    repaint();
+}
+
+namespace
+{
+    // A number with its unit converted to a base unit (seconds, Hz, %, dB, semitones); words give a sign
+    struct Reading { double value = 0.0; bool valid = false; juce::String unit; };
+
+    Reading readText (juce::String t, const juce::String& unitHint, const juce::String& lowWord, const juce::String& highWord)
+    {
+        Reading r;
+        t = t.trim().toLowerCase();
+        // leading words: "fade 30%", "punchy 40%", "off", "flat", "linear", "unison"
+        double sign = 1.0;
+        for (auto w : { "off", "flat", "linear", "unison" })
+            if (t == w) { r.valid = true; r.value = 0.0; return r; }
+        if (lowWord.isNotEmpty() && t.startsWith (lowWord)) { sign = -1.0; t = t.fromFirstOccurrenceOf (lowWord, false, false).trim(); }
+        else if (highWord.isNotEmpty() && t.startsWith (highWord)) { t = t.fromFirstOccurrenceOf (highWord, false, false).trim(); }
+        // the number
+        int i = 0;
+        juce::String num;
+        while (i < t.length() && (juce::CharacterFunctions::isDigit (t[i]) || t[i] == '.' || t[i] == '-' || t[i] == '+' || t[i] == ','))
+        {
+            num += juce::String::charToString (t[i] == ',' ? (juce::juce_wchar) '.' : t[i]);
+            ++i;
+        }
+        if (num.isEmpty() || ! num.containsAnyOf ("0123456789"))
+            return r;
+        r.value = num.getDoubleValue() * sign;
+        auto unit = t.substring (i).trim().removeCharacters (" ");
+        if (unit.isEmpty()) unit = unitHint;
+        if (unit.startsWith ("ms")) { r.value *= 0.001; r.unit = "s"; }
+        else if (unit.startsWith ("khz")) { r.value *= 1000.0; r.unit = "hz"; }
+        else if (unit.startsWith ("hz")) r.unit = "hz";
+        else if (unit.startsWith ("s")) r.unit = unit.startsWith ("st") ? "st" : "s";
+        else if (unit.startsWith ("oct")) { r.value *= 12.0; r.unit = "st"; }
+        else r.unit = unit;   // %, db, or none
+        r.valid = true;
+        return r;
+    }
+
+    juce::String unitOf (const juce::String& shown)
+    {
+        auto t = shown.trim().toLowerCase();
+        int i = t.length();
+        while (i > 0 && ! juce::CharacterFunctions::isDigit (t[i - 1])) --i;
+        return t.substring (i).removeCharacters (" ");
+    }
+
+    juce::String firstWord (const juce::String& s)
+    {
+        auto w = s.trim().toLowerCase().upToFirstOccurrenceOf (" ", false, false);
+        return w.containsAnyOf ("0123456789+-.") ? juce::String() : w;
+    }
+}
+
+float parseTypedValue (const juce::RangedAudioParameter& p, const juce::String& typed)
+{
+    // Learn this parameter's words for its low and high ends ("fade"/"swell", "swell"/"punchy")
+    const auto lowText = p.getText (0.0f, 64), highText = p.getText (1.0f, 64);
+    const auto lowWord = firstWord (lowText), highWord = firstWord (highText);
+    auto hint = unitOf (p.getCurrentValueAsText());
+    if (hint == "oct") hint = "st";   // a bare number for a pitch means semitones
+    const auto target = readText (typed, hint, lowWord == highWord ? juce::String() : lowWord, lowWord == highWord ? juce::String() : highWord);
+    if (! target.valid)
+        return -1.0f;
+
+    auto valueAt = [&] (float v)
+    {
+        const auto t = p.getText (v, 64);
+        return readText (t, unitOf (t), lowWord == highWord ? juce::String() : lowWord, lowWord == highWord ? juce::String() : highWord).value;
+    };
+    // Every Spark parameter's display is monotonic in its value, so a binary search finds it
+    const double a = valueAt (0.0f), b = valueAt (1.0f);
+    const bool rising = b >= a;
+
+    if ((rising && target.value <= a) || (! rising && target.value >= a)) return 0.0f;
+    if ((rising && target.value >= b) || (! rising && target.value <= b)) return 1.0f;
+    float lo = 0.0f, hi = 1.0f;
+    for (int i = 0; i < 40; ++i)
+    {
+        const float mid = 0.5f * (lo + hi);
+        if ((valueAt (mid) < target.value) == rising) lo = mid; else hi = mid;
+    }
+    return 0.5f * (lo + hi);
 }
 
 void ValueBox::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheelDetails& w)

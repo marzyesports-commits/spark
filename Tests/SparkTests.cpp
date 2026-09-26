@@ -1193,6 +1193,70 @@ int main (int argc, char** argv)
         }
     }
 
+    // ---------------------------------------------------------------- envelope upgrades
+    std::cout << "Envelopes: delay, sustain slope, playhead, typed values" << std::endl;
+    {
+        auto make = [&]
+        {
+            auto p = std::make_unique<InstrumentProcessor>();
+            p->setRateAndBufferSizeDetails (sr, 256);
+            p->prepareToPlay (sr, 256);
+            p->setMode (InstrumentProcessor::tableMode);
+            p->facetParam (InstrumentProcessor::space).setValueNotifyingHost (0.0f);
+            setReal (*p, "attack", 0.0f);
+            setReal (*p, "decay", 0.05f);
+            return p;
+        };
+        auto seconds = [] (float s) { return std::sqrt (juce::jmax (0.0f, (s * 1000.0f - 1.0f) / 4999.0f)); };
+        {
+            auto p = make();
+            setReal (*p, "delay", seconds (0.2f));
+            auto b = renderEvents (*p, sr, { Ev { 0.0, juce::MidiMessage::noteOn (1, 57, 0.8f) }, Ev { 0.6, juce::MidiMessage::noteOff (1, 57) } }, 0.6);
+            check (stats (b, 0, (int) (0.18 * sr)).peak < 1.0e-4f && stats (b, (int) (0.25 * sr), (int) (0.2 * sr)).rms > 0.01f, "Delay keeps the note silent, then it starts");
+        }
+        {
+            auto p = make();
+            setReal (*p, "sustain", 0.8f);
+            setReal (*p, "sustainSlope", -0.8f);
+            auto b = renderEvents (*p, sr, { Ev { 0.0, juce::MidiMessage::noteOn (1, 57, 0.8f) }, Ev { 2.5, juce::MidiMessage::noteOff (1, 57) } }, 2.5);
+            const float early = stats (b, (int) (0.3 * sr), (int) (0.1 * sr)).rms, late = stats (b, (int) (2.2 * sr), (int) (0.1 * sr)).rms;
+            check (late < early * 0.3f, "Sustain slope fades a held note (" + juce::String (late / early, 2) + "x after 2 s)");
+            auto q = make();
+            setReal (*q, "sustain", 0.2f);
+            setReal (*q, "sustainSlope", 0.8f);
+            auto c = renderEvents (*q, sr, { Ev { 0.0, juce::MidiMessage::noteOn (1, 57, 0.8f) }, Ev { 2.5, juce::MidiMessage::noteOff (1, 57) } }, 2.5);
+            const float e2 = stats (c, (int) (0.06 * sr), (int) (0.04 * sr)).rms, l2 = stats (c, (int) (2.2 * sr), (int) (0.1 * sr)).rms;
+            check (l2 > e2 * 2.0f, "...or swells it up (" + juce::String (l2 / e2, 2) + "x)");
+        }
+        {
+            auto p = make();
+            setReal (*p, "release", seconds (0.1f));
+            renderEvents (*p, sr, { Ev { 0.0, juce::MidiMessage::noteOn (1, 57, 0.8f) } }, 0.3);
+            int playing = 0;
+            float stage = -1;
+            for (auto& d : p->envDisplay) if (d.amp.load() >= 0.0f) { ++playing; stage = d.amp.load(); }
+            check (playing == 1 && (int) stage == 4, "The playhead knows a held note is in its sustain (" + juce::String (stage, 2) + ")");
+            renderEvents (*p, sr, { Ev { 0.0, juce::MidiMessage::noteOff (1, 57) } }, 0.5);
+            playing = 0;
+            for (auto& d : p->envDisplay) if (d.amp.load() >= 0.0f) ++playing;
+            check (playing == 0, "...and clears when the note has finished");
+        }
+        {
+            InstrumentProcessor p;
+            auto prm = [&] (const char* id) -> juce::RangedAudioParameter& { return *p.apvts.getParameter (id); };
+            auto parsed = [&] (const char* id, const char* text) { return prm (id).convertFrom0to1 (juce::jmax (0.0f, parseTypedValue (prm (id), text))); };
+            check (std::abs (fmt::envSeconds (parseTypedValue (prm ("attack"), "250 ms")) - 0.25f) < 0.01f, "Typing 250 ms sets the attack to 250 ms");
+            check (std::abs (fmt::envSeconds (parseTypedValue (prm ("release"), "1.5 s")) - 1.5f) < 0.03f, "Typing 1.5 s works too");
+            check (std::abs (parsed ("sustain", "70%") - 0.7f) < 0.01f && std::abs (parsed ("sustain", "35") - 0.35f) < 0.01f, "Typing 70% (or just 35) sets the sustain");
+            check (std::abs (parsed ("attackCurve", "punchy 40") - 0.4f) < 0.02f && std::abs (parsed ("attackCurve", "swell 20%") + 0.2f) < 0.02f
+                       && std::abs (parsed ("attackCurve", "linear")) < 0.035f, "Curves understand punchy, swell and linear");
+            check (std::abs (parsed ("sustainSlope", "fade 50") + 0.5f) < 0.02f, "Sustain slope understands fade and swell");
+            check (std::abs (fmt::cutoffHz (parseTypedValue (prm ("tone"), "2 kHz")) - 2000.0f) < 60.0f, "Typing 2 kHz sets the cutoff");
+            check (juce::roundToInt (parsed ("subTune", "-19")) == -19 && juce::roundToInt (parsed ("subTune", "-2 oct")) == -24, "Sub pitch takes semitones or octaves");
+            check (parseTypedValue (prm ("sustain"), "loud please") < 0.0f, "Text it can't read is ignored");
+        }
+    }
+
     // ---------------------------------------------------------------- undo / redo
     std::cout << "Undo and redo" << std::endl;
     {
@@ -1339,6 +1403,22 @@ int main (int argc, char** argv)
         for (auto* c : ed->getChildren()[0]->getChildren())
             if (auto* b = dynamic_cast<PresetBrowser*> (c)) b->setVisible (false);
         p.loadPreset (35); // a pluck with a tone envelope
+        p.apvts.getParameter ("delay")->setValueNotifyingHost (0.12f);
+        p.apvts.getParameter ("sustain")->setValueNotifyingHost (0.6f);
+        p.apvts.getParameter ("sustainSlope")->setValueNotifyingHost (0.3f);   // -0.4: a gentle fade
+        p.apvts.getParameter ("toneAmount")->setValueNotifyingHost (0.75f);
+        {
+            // hold a chord so the playheads show, staggered so they sit at different stages
+            juce::AudioBuffer<float> buf (2, 512);
+            juce::MidiBuffer m;
+            m.addEvent (juce::MidiMessage::noteOn (1, 57, 0.8f), 0);
+            p.processBlock (buf, m);
+            for (int i = 0; i < 30; ++i) { juce::MidiBuffer none; p.processBlock (buf, none); }
+            juce::MidiBuffer m2;
+            m2.addEvent (juce::MidiMessage::noteOn (1, 64, 0.8f), 0);
+            p.processBlock (buf, m2);
+            for (int i = 0; i < 3; ++i) { juce::MidiBuffer none; p.processBlock (buf, none); }
+        }
         for (auto* c : ed->getChildren()[0]->getChildren())
             if (auto* se = dynamic_cast<ShapeEditor*> (c)) { se->setVisible (true); se->toFront (false); }
         snapshot (ed.get(), outDir.getChildFile ("ui-shape-editor.png"));

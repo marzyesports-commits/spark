@@ -39,7 +39,7 @@ namespace
     }
 }
 
-SparkVoice::SparkVoice (InstrumentProcessor& p) : processor (p)
+SparkVoice::SparkVoice (InstrumentProcessor& p, int i) : processor (p), index (i)
 {
     scratch.setSize (2, chunkSize);
 }
@@ -138,7 +138,19 @@ void SparkVoice::stopNote (float, bool allowTailOff)
         ampEnv.reset();
         toneEnv.reset();
         clearCurrentNote();
+        publishEnvelopes (false);
     }
+}
+
+void SparkVoice::publishEnvelopes (bool active)
+{
+    if (index < 0 || index >= InstrumentProcessor::maxVoices)
+        return;
+    auto& d = processor.envDisplay[(size_t) index];
+    d.amp.store (active ? ampEnv.displayPosition() : -1.0f);
+    d.ampLevel.store (ampEnv.getLevel());
+    d.tone.store (active ? toneEnv.displayPosition() : -1.0f);
+    d.toneLevel.store (toneEnv.getLevel());
 }
 
 // Per note: drive -> filter (swept by the tone envelope) -> amp envelope.
@@ -459,9 +471,11 @@ void SparkVoice::renderNextBlock (juce::AudioBuffer<float>& out, int startSample
         if (! ampEnv.isActive())
         {
             clearCurrentNote();
-            break;
+            publishEnvelopes (false);
+            return;
         }
     }
+    publishEnvelopes (true);
 }
 } // namespace spark
 

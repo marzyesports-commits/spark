@@ -49,6 +49,14 @@ namespace
             layout.add (std::make_unique<juce::AudioParameterFloat> (juce::ParameterID { id ("AttackCurve"), 1 }, name + "Attack Curve", bipolar, 0.0f, curveAttr));
             layout.add (std::make_unique<juce::AudioParameterFloat> (juce::ParameterID { id ("DecayCurve"), 1 }, name + "Decay Curve", bipolar, 0.0f, curveAttr));
             layout.add (std::make_unique<juce::AudioParameterFloat> (juce::ParameterID { id ("ReleaseCurve"), 1 }, name + "Release Curve", bipolar, 0.0f, curveAttr));
+            layout.add (std::make_unique<juce::AudioParameterFloat> (juce::ParameterID { id ("Delay"), 1 }, name + "Delay", unit, 0.0f,
+                juce::AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return v <= 0.0f ? juce::String ("0 ms") : fmt::envTime (v); })));
+            layout.add (std::make_unique<juce::AudioParameterFloat> (juce::ParameterID { id ("SustainSlope"), 1 }, name + "Sustain Slope", bipolar, 0.0f,
+                juce::AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int)
+                {
+                    if (std::abs (v) < 0.01f) return juce::String ("Flat");
+                    return (v < 0 ? "Fade " : "Swell ") + juce::String (juce::roundToInt (std::abs (v) * 100.0f)) + "%";
+                })));
         };
         // Amp envelope keeps its original ids (attack, decay, sustain, release) so old projects still load.
         addEnv ({}, {}, 0.08f, 0.4f, 0.7f, 0.35f);
@@ -133,6 +141,8 @@ InstrumentProcessor::InstrumentProcessor()
         e.attackCurve = apvts.getRawParameterValue (id ("AttackCurve"));
         e.decayCurve = apvts.getRawParameterValue (id ("DecayCurve"));
         e.releaseCurve = apvts.getRawParameterValue (id ("ReleaseCurve"));
+        e.delay = apvts.getRawParameterValue (id ("Delay"));
+        e.sustainSlope = apvts.getRawParameterValue (id ("SustainSlope"));
     };
     wireEnv (params.amp, {});
     wireEnv (params.toneEnv, "tone");
@@ -163,7 +173,7 @@ InstrumentProcessor::InstrumentProcessor()
 
     synth.addSound (new SparkSound());
     for (int i = 0; i < 16; ++i)
-        synth.addVoice (new SparkVoice (*this));
+        synth.addVoice (new SparkVoice (*this, i));
 
     startTimer (2000);
 }

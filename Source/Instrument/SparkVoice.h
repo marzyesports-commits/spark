@@ -16,7 +16,7 @@ struct SparkSound : public juce::SynthesiserSound
 class SparkVoice : public juce::SynthesiserVoice
 {
 public:
-    explicit SparkVoice (InstrumentProcessor&);
+    SparkVoice (InstrumentProcessor&, int index);
 
     bool canPlaySound (juce::SynthesiserSound*) override { return true; }
     void startNote (int midiNote, float velocity, juce::SynthesiserSound*, int pitchWheel) override;
@@ -85,6 +85,8 @@ private:
     void renderSample (float* left, float* right, int n, const SourceData&, double ratio);
 
     InstrumentProcessor& processor;
+    int index = 0;
+    void publishEnvelopes (bool active);
     SourceData::Ptr source;
     Envelope ampEnv, toneEnv;
     Svf filter;

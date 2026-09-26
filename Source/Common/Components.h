@@ -192,6 +192,11 @@ private:
 };
 
 // A labelled number you drag up/down to change (Shift = fine, double-click = reset, wheel works too).
+// Turns typed text ("250 ms", "1.2 s", "70%", "2 kHz", "-7 st", "fade 30") into a parameter's
+// normalised value, using the parameter's own display text to learn its units and direction.
+// Returns -1 if the text has no number or word it understands.
+float parseTypedValue (const juce::RangedAudioParameter&, const juce::String& typed);
+
 class ValueBox : public juce::Component,
                  public juce::SettableTooltipClient
 {
@@ -206,8 +211,11 @@ public:
     void mouseDoubleClick (const juce::MouseEvent&) override;
     void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
     bool framed = false; // draw a rounded box behind it
+    void startTyping();  // double-click: type an exact value
 
 private:
+    void finishTyping (bool commit);
+    std::unique_ptr<juce::TextEditor> editor;
     juce::RangedAudioParameter& param;
     juce::ParameterAttachment attachment;
     juce::String label;

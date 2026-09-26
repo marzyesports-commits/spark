@@ -107,6 +107,7 @@ public:
     {
         std::atomic<float> *attack = nullptr, *hold = nullptr, *decay = nullptr, *sustain = nullptr, *release = nullptr;
         std::atomic<float> *attackCurve = nullptr, *decayCurve = nullptr, *releaseCurve = nullptr;
+        std::atomic<float> *delay = nullptr, *sustainSlope = nullptr;
 
         Envelope::Settings settings() const
         {
@@ -119,6 +120,8 @@ public:
             s.attackCurve = attackCurve->load();
             s.decayCurve = decayCurve->load();
             s.releaseCurve = releaseCurve->load();
+            s.delay = delay->load() > 0.0f ? fmt::envSeconds (delay->load()) : 0.0f;
+            s.sustainSlope = sustainSlope->load();
             return s;
         }
     };
@@ -144,6 +147,14 @@ public:
         std::atomic<float>* noiseLevel = nullptr;
         std::atomic<float>* noiseColour = nullptr;  // 0 dark .. 1 bright
     } params;
+
+    // Where each voice is in its envelopes, for the playhead in the Shape views (-1 = not playing)
+    struct EnvDisplay
+    {
+        std::atomic<float> amp { -1.0f }, ampLevel { 0.0f }, tone { -1.0f }, toneLevel { 0.0f };
+    };
+    static constexpr int maxVoices = 16;
+    std::array<EnvDisplay, maxVoices> envDisplay;
 
     // Audio thread only: the note a new mono voice glides from (-1 = no glide). Set by SparkSynth.
     int glideFromNote = -1;

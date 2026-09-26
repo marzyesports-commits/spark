@@ -167,12 +167,33 @@ EnvelopeRefs EnvelopeRefs::from (juce::AudioProcessorValueTreeState& s, const ju
         return p;
     };
     return { get ("Attack"), get ("Hold"), get ("Decay"), get ("Sustain"), get ("Release"),
-             get ("AttackCurve"), get ("DecayCurve"), get ("ReleaseCurve") };
+             get ("AttackCurve"), get ("DecayCurve"), get ("ReleaseCurve"), get ("Delay"), get ("SustainSlope") };
 }
 
-EnvelopeGraph::EnvelopeGraph (EnvelopeRefs e, bool hold) : env (e), showHold (hold)
+EnvelopeGraph::EnvelopeGraph (EnvelopeRefs e, bool ext, const InstrumentProcessor* v, bool tone)
+    : env (e), extended (ext), voices (v), toneEnvelope (tone)
 {
-    startTimerHz (20);
+    startTimerHz (30);
+}
+
+void EnvelopeGraph::timerCallback()
+{
+    // Repaint only when something visible changed: a parameter, the dimming, or a playing voice
+    std::vector<float> now;
+    now.reserve (48);
+    for (auto* p : env.all()) now.push_back (p->getValue());
+    now.push_back (isDimmed && isDimmed() ? 1.0f : 0.0f);
+    if (voices != nullptr && isShowing())
+        for (const auto& d : voices->envDisplay)
+        {
+            now.push_back (toneEnvelope ? d.tone.load() : d.amp.load());
+            now.push_back (toneEnvelope ? d.toneLevel.load() : d.ampLevel.load());
+        }
+    if (now != lastSeen)
+    {
+        lastSeen = std::move (now);
+        repaint();
+    }
 }
 
 EnvelopeGraph::Geometry EnvelopeGraph::geometry() const
@@ -183,23 +204,25 @@ EnvelopeGraph::Geometry EnvelopeGraph::geometry() const
     g.bottom = b.getBottom() - (getHeight() > 120 ? 14.0f : 0.0f);
     const float h = g.bottom - g.top;
     const float sustainW = b.getWidth() * 0.14f;
-    const float holdFactor = showHold ? 0.5f : 0.0f;
+    const float extraFactor = extended ? 0.5f : 0.0f;   // delay and hold each get half a segment
     g.minW = 6.0f;
-    g.segW = (b.getWidth() - sustainW - 3.0f * g.minW) / (3.0f + holdFactor);
+    g.segW = (b.getWidth() - sustainW - 3.0f * g.minW) / (3.0f + 2.0f * extraFactor);
 
     // Zoom so the envelope fills most of the width (short plucks get room to edit).
+    const float wdl = extended ? env.delay->getValue() * g.segW * extraFactor : 0.0f;
     const float wa = g.minW + env.attack->getValue() * g.segW;
-    const float wh = showHold ? env.hold->getValue() * g.segW * holdFactor : 0.0f;
+    const float wh = extended ? env.hold->getValue() * g.segW * extraFactor : 0.0f;
     const float wd = g.minW + env.decay->getValue() * g.segW;
     const float wr = g.minW + env.release->getValue() * g.segW;
-    const float natural = wa + wh + wd + sustainW + wr;
+    const float natural = wdl + wa + wh + wd + sustainW + wr;
     const float zoom = dragging != none ? frozenZoom
                                         : juce::jlimit (1.0f, 4.0f, b.getWidth() * 0.9f / juce::jmax (1.0f, natural));
     g.segW *= zoom;
     g.minW *= zoom;
 
     g.x0 = b.getX();
-    g.xA = g.x0 + wa * zoom;
+    g.xDl = g.x0 + wdl * zoom;
+    g.xA = g.xDl + wa * zoom;
     g.xH = g.xA + wh * zoom;
     g.xD = g.xH + wd * zoom;
     g.xS = g.xD + sustainW * zoom;
@@ -207,19 +230,21 @@ EnvelopeGraph::Geometry EnvelopeGraph::geometry() const
     g.zoom = zoom;
 
     const float s = env.sustain->getValue();
-    const float sy = g.bottom - s * h;
-    const float ac = env.attackCurve->convertFrom0to1 (env.attackCurve->getValue());
-    const float dc = env.decayCurve->convertFrom0to1 (env.decayCurve->getValue());
-    const float rc = env.releaseCurve->convertFrom0to1 (env.releaseCurve->getValue());
+    const float slope = valueOf (env.sustainSlope);
+    g.sustainEnd = Envelope::sustainAfter (s, slope, 2.0f);
+    const float sy = g.bottom - s * h, syEnd = g.bottom - g.sustainEnd * h;
+    const float ac = valueOf (env.attackCurve), dc = valueOf (env.decayCurve), rc = valueOf (env.releaseCurve);
 
-    g.point[0] = { g.xA, g.top };
-    g.point[1] = { g.xH, g.top };
-    g.point[2] = { g.xD, sy };
-    g.point[3] = { g.xS, sy };
-    g.point[4] = { g.xR, g.bottom };
-    g.handle[0] = { (g.x0 + g.xA) * 0.5f, g.bottom - Envelope::shape (0.5f, ac) * h };
+    g.point[0] = { g.xDl, g.bottom };
+    g.point[1] = { g.xA, g.top };
+    g.point[2] = { g.xH, g.top };
+    g.point[3] = { g.xD, sy };
+    g.point[4] = { g.xS, syEnd };
+    g.point[5] = { g.xR, g.bottom };
+    g.handle[0] = { (g.xDl + g.xA) * 0.5f, g.bottom - Envelope::shape (0.5f, ac) * h };
     g.handle[1] = { (g.xH + g.xD) * 0.5f, g.bottom - (s + (1.0f - s) * (1.0f - Envelope::shape (0.5f, dc))) * h };
-    g.handle[2] = { (g.xS + g.xR) * 0.5f, g.bottom - s * (1.0f - Envelope::shape (0.5f, rc)) * h };
+    g.handle[2] = { (g.xD + g.xS) * 0.5f, g.bottom - Envelope::sustainAfter (s, slope, 1.0f) * h };
+    g.handle[3] = { (g.xS + g.xR) * 0.5f, g.bottom - g.sustainEnd * (1.0f - Envelope::shape (0.5f, rc)) * h };
     return g;
 }
 
@@ -227,17 +252,17 @@ juce::Path EnvelopeGraph::curvePath (const Geometry& g) const
 {
     const float h = g.bottom - g.top;
     const float s = env.sustain->getValue();
-    const float ac = env.attackCurve->convertFrom0to1 (env.attackCurve->getValue());
-    const float dc = env.decayCurve->convertFrom0to1 (env.decayCurve->getValue());
-    const float rc = env.releaseCurve->convertFrom0to1 (env.releaseCurve->getValue());
+    const float slope = valueOf (env.sustainSlope);
+    const float ac = valueOf (env.attackCurve), dc = valueOf (env.decayCurve), rc = valueOf (env.releaseCurve);
     const int steps = 32;
 
     juce::Path p;
     p.startNewSubPath (g.x0, g.bottom);
+    p.lineTo (g.xDl, g.bottom);
     for (int i = 1; i <= steps; ++i)
     {
         const float t = (float) i / steps;
-        p.lineTo (g.x0 + (g.xA - g.x0) * t, g.bottom - Envelope::shape (t, ac) * h);
+        p.lineTo (g.xDl + (g.xA - g.xDl) * t, g.bottom - Envelope::shape (t, ac) * h);
     }
     p.lineTo (g.xH, g.top);
     for (int i = 1; i <= steps; ++i)
@@ -245,11 +270,15 @@ juce::Path EnvelopeGraph::curvePath (const Geometry& g) const
         const float t = (float) i / steps;
         p.lineTo (g.xH + (g.xD - g.xH) * t, g.bottom - (s + (1.0f - s) * (1.0f - Envelope::shape (t, dc))) * h);
     }
-    p.lineTo (g.xS, g.bottom - s * h);
+    for (int i = 1; i <= 16; ++i)   // sustain, tilted by the slope (2 s shown)
+    {
+        const float t = (float) i / 16;
+        p.lineTo (g.xD + (g.xS - g.xD) * t, g.bottom - Envelope::sustainAfter (s, slope, 2.0f * t) * h);
+    }
     for (int i = 1; i <= steps; ++i)
     {
         const float t = (float) i / steps;
-        p.lineTo (g.xS + (g.xR - g.xS) * t, g.bottom - s * (1.0f - Envelope::shape (t, rc)) * h);
+        p.lineTo (g.xS + (g.xR - g.xS) * t, g.bottom - g.sustainEnd * (1.0f - Envelope::shape (t, rc)) * h);
     }
     return p;
 }
@@ -266,11 +295,13 @@ void EnvelopeGraph::paint (juce::Graphics& g)
     const auto geo = geometry();
     const bool dim = isDimmed && isDimmed();
     const float alpha = dim ? 0.35f : 1.0f;
+    const float h = geo.bottom - geo.top;
 
     // stage dividers
     g.setColour (faint);
-    for (float x : { geo.xA, geo.xH, geo.xD, geo.xS })
-        g.fillRect (x - 0.5f, geo.top, 1.0f, geo.bottom - geo.top);
+    for (float x : { geo.xDl, geo.xA, geo.xH, geo.xD, geo.xS })
+        if (x > geo.x0 + 0.5f)
+            g.fillRect (x - 0.5f, geo.top, 1.0f, geo.bottom - geo.top);
 
     auto path = curvePath (geo);
     juce::Path fill (path);
@@ -281,24 +312,60 @@ void EnvelopeGraph::paint (juce::Graphics& g)
     g.setColour (gold.withAlpha (alpha));
     g.strokePath (path, juce::PathStrokeType (2.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
 
-    // curve handles
-    for (int i = 0; i < 3; ++i)
+    // curve handles (the slope handle only matters once there's a sustain to tilt)
+    for (int i = 0; i < 4; ++i)
     {
         const bool active = hovered == attackHandle + i || dragging == attackHandle + i;
         auto r = juce::Rectangle<float> (active ? 11.0f : 8.0f, active ? 11.0f : 8.0f).withCentre (geo.handle[i]);
         g.setColour (bg);
         g.fillEllipse (r);
         g.setColour ((active ? gold : text2).withAlpha (alpha));
-        g.drawEllipse (r, 1.5f);
+        if (i == 2) // slope: a diamond, so it reads differently from the curve circles
+        {
+            juce::Path d;
+            const auto c = r.getCentre();
+            const float k = r.getWidth() * 0.6f;
+            d.addQuadrilateral (c.x, c.y - k, c.x + k, c.y, c.x, c.y + k, c.x - k, c.y);
+            g.setColour (bg);
+            g.fillPath (d);
+            g.setColour ((active ? gold : text2).withAlpha (alpha));
+            g.strokePath (d, juce::PathStrokeType (1.5f));
+        }
+        else
+        {
+            g.drawEllipse (r, 1.5f);
+        }
     }
     // points
-    for (int i = 0; i < 5; ++i)
+    for (int i = 0; i < 6; ++i)
     {
-        if (i == 1 && ! showHold) continue;
+        if ((i == delayPt || i == holdPt) && ! extended) continue;
         const bool active = hovered == i || dragging == i;
         const float rad = active ? 5.5f : 4.0f;
         g.setColour ((active ? gold : text).withAlpha (alpha));
         g.fillEllipse (juce::Rectangle<float> (rad * 2.0f, rad * 2.0f).withCentre (geo.point[i]));
+    }
+
+    // live playheads: one glowing dot per sounding voice, at its stage and level
+    if (voices != nullptr)
+    {
+        const float xs[] = { geo.x0, geo.xDl, geo.xA, geo.xH, geo.xD, geo.xS, geo.xR };
+        for (const auto& d : voices->envDisplay)
+        {
+            const float pos = toneEnvelope ? d.tone.load() : d.amp.load();
+            if (pos < 0.0f) continue;
+            const int stage = juce::jlimit (0, 5, (int) pos);
+            const float frac = pos - (float) stage;
+            const float x = xs[stage] + (xs[stage + 1] - xs[stage]) * frac;
+            const float level = juce::jlimit (0.0f, 1.0f, toneEnvelope ? d.toneLevel.load() : d.ampLevel.load());
+            const juce::Point<float> c (x, geo.bottom - level * h);
+            g.setColour (goldHi.withAlpha (0.18f));
+            g.fillRect (x - 0.5f, geo.top, 1.0f, geo.bottom - geo.top);
+            g.setColour (goldHi.withAlpha (0.3f));
+            g.fillEllipse (juce::Rectangle<float> (16.0f, 16.0f).withCentre (c));
+            g.setColour (juce::Colour (0xfffffbf0));
+            g.fillEllipse (juce::Rectangle<float> (7.0f, 7.0f).withCentre (c));
+        }
     }
 
     if (getHeight() > 120)
@@ -307,11 +374,12 @@ void EnvelopeGraph::paint (juce::Graphics& g)
         g.setFont (fonts::body (10.0f, true).withExtraKerningFactor (0.14f));
         auto lab = [&] (const juce::String& t, float x0, float x1)
         {
-            if (x1 - x0 > 10.0f)
+            if (x1 - x0 > 12.0f)
                 g.drawText (t, juce::Rectangle<float> (x0, geo.bottom + 2.0f, x1 - x0, 12.0f), juce::Justification::centred, false);
         };
-        lab ("A", geo.x0, geo.xA);
-        if (showHold) lab ("H", geo.xA, geo.xH);
+        if (extended) lab ("DL", geo.x0, geo.xDl);
+        lab ("A", geo.xDl, geo.xA);
+        if (extended) lab ("H", geo.xA, geo.xH);
         lab ("D", geo.xH, geo.xD);
         lab ("S", geo.xD, geo.xS);
         lab ("R", geo.xS, geo.xR);
@@ -330,12 +398,12 @@ EnvelopeGraph::Target EnvelopeGraph::targetAt (juce::Point<float> p) const
     const auto geo = geometry();
     Target best = none;
     float bestD = 12.0f;
-    for (int i = 0; i < 5; ++i)
+    for (int i = 0; i < 6; ++i)
     {
-        if (i == 1 && ! showHold) continue;
+        if ((i == delayPt || i == holdPt) && ! extended) continue;
         if (auto d = geo.point[i].getDistanceFrom (p); d < bestD) { bestD = d; best = (Target) i; }
     }
-    for (int i = 0; i < 3; ++i)
+    for (int i = 0; i < 4; ++i)
         if (auto d = geo.handle[i].getDistanceFrom (p); d < bestD) { bestD = d; best = (Target) (attackHandle + i); }
     return best;
 }
@@ -344,6 +412,7 @@ std::vector<juce::RangedAudioParameter*> EnvelopeGraph::paramsFor (Target t) con
 {
     switch (t)
     {
+        case delayPt:       return { env.delay };
         case attackPt:      return { env.attack };
         case holdPt:        return { env.hold };
         case decayPt:       return { env.decay, env.sustain };
@@ -351,6 +420,7 @@ std::vector<juce::RangedAudioParameter*> EnvelopeGraph::paramsFor (Target t) con
         case releasePt:     return { env.release };
         case attackHandle:  return { env.attackCurve };
         case decayHandle:   return { env.decayCurve };
+        case slopeHandle:   return { env.sustainSlope };
         case releaseHandle: return { env.releaseCurve };
         case none:          break;
     }
@@ -368,10 +438,12 @@ void EnvelopeGraph::mouseMove (const juce::MouseEvent& e)
                               : (isHandle || t == sustainPt ? juce::MouseCursor::UpDownResizeCursor
                                                              : (t == decayPt ? juce::MouseCursor::DraggingHandCursor
                                                                              : juce::MouseCursor::LeftRightResizeCursor)));
-    static const char* tips[] = { "Attack time: drag sideways", "Hold time: drag sideways",
+    static const char* tips[] = { "Delay: silence before the attack starts. Drag sideways",
+                                  "Attack time: drag sideways", "Hold time: drag sideways",
                                   "Decay time (sideways) and sustain level (up/down)", "Sustain level: drag up or down",
                                   "Release time: drag sideways", "Attack curve: drag up for punchy, down for a slow swell",
                                   "Decay curve: drag down for a snappy drop, up for a slow fade",
+                                  "Sustain slope: drag down to fade out while held, up to swell",
                                   "Release curve: drag down for a snappy tail, up for a slow fade" };
     setTooltip (t == none ? juce::String() : juce::String (tips[t]) + ". Double-click to reset.");
     repaint();
@@ -411,6 +483,7 @@ void EnvelopeGraph::mouseDrag (const juce::MouseEvent& e)
 
     switch (dragging)
     {
+        case delayPt:   set (env.delay, dx / (geo.segW * 0.5f)); break;
         case attackPt:  set (env.attack, dx / geo.segW); break;
         case holdPt:    set (env.hold, dx / (geo.segW * 0.5f)); break;
         case decayPt:   set (env.decay, dx / geo.segW); set (env.sustain, -dy / h); break;
@@ -418,6 +491,7 @@ void EnvelopeGraph::mouseDrag (const juce::MouseEvent& e)
         case releasePt: set (env.release, dx / geo.segW); break;
         case attackHandle:  set (env.attackCurve, -dy / h); break;   // up = punchier rise
         case decayHandle:   set (env.decayCurve, dy / h); break;     // down = snappier drop
+        case slopeHandle:   set (env.sustainSlope, -dy / h); break;  // up = swell, down = fade
         case releaseHandle: set (env.releaseCurve, dy / h); break;
         case none: break;
     }
@@ -447,8 +521,8 @@ ShapePanel::ShapePanel (InstrumentProcessor& p)
     : processor (p),
       ampRefs (EnvelopeRefs::from (p.apvts, {})),
       toneRefs (EnvelopeRefs::from (p.apvts, "tone")),
-      ampGraph (ampRefs, true),
-      toneGraph (toneRefs, false)
+      ampGraph (ampRefs, true, &p, false),
+      toneGraph (toneRefs, false, &p, true)
 {
     for (auto* b : { &ampTab, &toneTab })
     {
@@ -526,8 +600,8 @@ ShapeEditor::ShapeEditor (InstrumentProcessor& p)
     : processor (p),
       ampRefs (EnvelopeRefs::from (p.apvts, {})),
       toneRefs (EnvelopeRefs::from (p.apvts, "tone")),
-      ampGraph (ampRefs, true),
-      toneGraph (toneRefs, true)
+      ampGraph (ampRefs, true, &p, false),
+      toneGraph (toneRefs, true, &p, true)
 {
     setWantsKeyboardFocus (true);
     addAndMakeVisible (ampGraph);
@@ -541,6 +615,7 @@ ShapeEditor::ShapeEditor (InstrumentProcessor& p)
     auto& s = p.apvts;
     auto addBoxes = [] (juce::OwnedArray<ValueBox>& arr, const EnvelopeRefs& r, const juce::String& what)
     {
+        arr.add (new ValueBox (*r.delay, "DELAY", what + " delay: silence before the attack"));
         arr.add (new ValueBox (*r.attack, "ATTACK", what + " attack time"));
         arr.add (new ValueBox (*r.hold, "HOLD", what + " hold time at full level"));
         arr.add (new ValueBox (*r.decay, "DECAY", what + " decay time"));
@@ -548,6 +623,7 @@ ShapeEditor::ShapeEditor (InstrumentProcessor& p)
         arr.add (new ValueBox (*r.release, "RELEASE", what + " release time"));
         arr.add (new ValueBox (*r.attackCurve, "A CURVE", what + " attack curve"));
         arr.add (new ValueBox (*r.decayCurve, "D CURVE", what + " decay curve"));
+        arr.add (new ValueBox (*r.sustainSlope, "S SLOPE", what + " sustain slope: fade out or swell up while the key is held"));
         arr.add (new ValueBox (*r.releaseCurve, "R CURVE", what + " release curve"));
     };
     addBoxes (ampBoxes, ampRefs, "Amp");
@@ -566,11 +642,11 @@ void ShapeEditor::resized()
     auto layoutCard = [&] (int x, EnvelopeGraph& graph, juce::OwnedArray<ValueBox>& boxes)
     {
         graph.setBounds (x + 16, 110, cardW - 32, 170);
-        const int bw = (cardW - 32 - 4 * 6) / 5;
+        const int bw = (cardW - 32 - 5 * 6) / 6;
         for (int i = 0; i < boxes.size(); ++i)
         {
-            const int row = i < 5 ? 0 : 1;
-            const int col = i < 5 ? i : i - 5;
+            const int row = i < 6 ? 0 : 1;
+            const int col = i < 6 ? i : i - 6;
             boxes[i]->setBounds (x + 16 + col * (bw + 6), 290 + row * 50, bw, 42);
         }
     };
@@ -590,7 +666,7 @@ void ShapeEditor::paint (juce::Graphics& g)
     drawSectionLabel (g, "SHAPE", { 20.0f, 16.0f, 100.0f, 32.0f });
     g.setColour (muted);
     g.setFont (fonts::body (12.0f));
-    g.drawText ("Drag points to set times and levels. Drag the small circles to bend each curve. Hold Shift for fine moves.",
+    g.drawText ("Drag points for times and levels, circles to bend curves, the diamond to tilt the sustain. Double-click a number to type it.",
                 juce::Rectangle<float> (106.0f, 16.0f, (float) close.getX() - 120.0f, 32.0f), juce::Justification::centredLeft, true);
     g.setColour (line);
     g.fillRect (16, 62, getWidth() - 32, 1);
