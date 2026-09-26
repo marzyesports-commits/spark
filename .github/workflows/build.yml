@@ -157,7 +157,9 @@ jobs:
             New-Item -ItemType Directory -Force "$zip\VST3", "$zip\Apps" | Out-Null
             Copy-Item -Recurse -Force "build\Spark_artefacts\Release\VST3\Spark.vst3", "build\SparkFX_artefacts\Release\VST3\Spark FX.vst3" "$zip\VST3"
             Copy-Item -Force "build\Spark_artefacts\Release\Standalone\Spark.exe", "build\SparkFX_artefacts\Release\Standalone\Spark FX.exe" "$zip\Apps"
-            & 7z a -tzip "$zip.zip" "$zip" | Out-Null
+            Push-Location dist
+            & 7z a -tzip "Spark-$env:VERSION-Windows-plugins.zip" "Spark-$env:VERSION-Windows-plugins" | Out-Null
+            Pop-Location
             if ($LASTEXITCODE -ne 0) { throw "7z exited with $LASTEXITCODE" }
             Remove-Item -Recurse -Force $zip
           } catch { Fail ("Zip failed: " + $_) }
