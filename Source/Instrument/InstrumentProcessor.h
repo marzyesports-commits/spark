@@ -25,6 +25,7 @@ struct SourceData : public juce::ReferenceCountedObject
     int tableFrameLength = 0;         // >0 when the file was a wavetable (its frame size)
     float rootNote = 60.0f;           // MIDI note the recording plays at (fractional = detuned)
     bool shapeshifted = false;        // table was rebuilt by Shapeshift
+    juce::String factoryId;           // set for sounds from Spark's library (saved by name, not audio)
 
     void computePeaks();
 
@@ -74,6 +75,12 @@ public:
     // ---- source management (message thread)
     SourceData::Ptr getSource() const;
     bool loadFile (const juce::File&, juce::String& error);
+    // A sound from the built-in library. fromPreset: keep the preset's engine choice; otherwise pick one for it.
+    bool loadFactorySound (const juce::String& id, bool fromPreset = false);
+    void loadInitSound();   // Spark's plain built-in tone
+    // Keep the loaded sound when changing presets. Turns on when you load or pick a sound yourself.
+    bool isSoundLocked() const noexcept { return soundLocked.load(); }
+    void setSoundLocked (bool);
     void makeTableFromSample();
     // Rebuilds a bounced note from another synth with Spark's engine. Empty file = use the current sound.
     bool shapeshift (const juce::File&, juce::String& summary);
@@ -93,6 +100,7 @@ public:
 
 protected:
     void migrateParameters (juce::ValueTree&) override;
+    void applyPresetSound (const Preset&) override;
 
 public:
     bool isModuleLocked (const juce::String& moduleId) const;
@@ -100,6 +108,7 @@ public:
     void sparkEffects();            // roll only the enabled, unlocked effects
     void loadChain (int index);     // load an effect-chain preset
     juce::String getChainName() const { return chainName; }
+    juce::String currentSoundId() const override;
     void getCoreShape (std::vector<float>& out, int n) override;
 
     // raw parameter access for voices (audio thread)
@@ -206,6 +215,7 @@ private:
     mutable juce::CriticalSection lockLock;
     juce::String chainName { "Clean" };
     bool effectsOnlyRoll = false;
+    std::atomic<bool> soundLocked { false };
     juce::String lastShapeshift;
     juce::SmoothedValue<float> levelSmooth;
     void updateModulation (int numSamples, const juce::MidiBuffer&, double bpm, double ppq, bool playing);

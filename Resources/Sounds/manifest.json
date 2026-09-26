@@ -1,0 +1,660 @@
+{
+ "sounds": [
+  {
+   "id": "bass_808_long",
+   "name": "808 Long",
+   "category": "Bass",
+   "root": 36,
+   "table": 0,
+   "seconds": 2.8
+  },
+  {
+   "id": "bass_808_punch",
+   "name": "808 Punch",
+   "category": "Bass",
+   "root": 36,
+   "table": 0,
+   "seconds": 1.4
+  },
+  {
+   "id": "bass_analog",
+   "name": "Analog Bass",
+   "category": "Bass",
+   "root": 36,
+   "table": 0,
+   "seconds": 1.8
+  },
+  {
+   "id": "bass_brass",
+   "name": "Brass Bass",
+   "category": "Bass",
+   "root": 36,
+   "table": 0,
+   "seconds": 1.8
+  },
+  {
+   "id": "bass_fm",
+   "name": "FM Bass",
+   "category": "Bass",
+   "root": 36,
+   "table": 0,
+   "seconds": 1.2
+  },
+  {
+   "id": "bass_growl",
+   "name": "Growl",
+   "category": "Bass",
+   "root": 36,
+   "table": 0,
+   "seconds": 2.0
+  },
+  {
+   "id": "bass_neuro",
+   "name": "Neuro Bass",
+   "category": "Bass",
+   "root": 36,
+   "table": 0,
+   "seconds": 2.0
+  },
+  {
+   "id": "bass_pluck",
+   "name": "Pluck Bass",
+   "category": "Bass",
+   "root": 36,
+   "table": 0,
+   "seconds": 1.1
+  },
+  {
+   "id": "bass_reese",
+   "name": "Reese",
+   "category": "Bass",
+   "root": 36,
+   "table": 0,
+   "seconds": 2.6
+  },
+  {
+   "id": "bass_sub",
+   "name": "Sub Sine",
+   "category": "Bass",
+   "root": 36,
+   "table": 0,
+   "seconds": 2.0
+  },
+  {
+   "id": "bass_tape",
+   "name": "Tape Bass",
+   "category": "Bass",
+   "root": 36,
+   "table": 0,
+   "seconds": 2.0
+  },
+  {
+   "id": "bass_wobble",
+   "name": "Wobble",
+   "category": "Bass",
+   "root": 24,
+   "table": 0,
+   "seconds": 2.0
+  },
+  {
+   "id": "pad_air",
+   "name": "Air Pad",
+   "category": "Pads",
+   "root": 60,
+   "table": 0,
+   "seconds": 4.0
+  },
+  {
+   "id": "pad_choir",
+   "name": "Choir Aah",
+   "category": "Pads",
+   "root": 60,
+   "table": 0,
+   "seconds": 4.0
+  },
+  {
+   "id": "pad_dark",
+   "name": "Dark Drone",
+   "category": "Pads",
+   "root": 48,
+   "table": 0,
+   "seconds": 4.5
+  },
+  {
+   "id": "pad_organ",
+   "name": "Drawbar Organ",
+   "category": "Pads",
+   "root": 60,
+   "table": 0,
+   "seconds": 3.0
+  },
+  {
+   "id": "pad_glass",
+   "name": "Glass Pad",
+   "category": "Pads",
+   "root": 60,
+   "table": 0,
+   "seconds": 4.0
+  },
+  {
+   "id": "pad_shimmer",
+   "name": "Shimmer",
+   "category": "Pads",
+   "root": 60,
+   "table": 0,
+   "seconds": 4.0
+  },
+  {
+   "id": "pad_strings",
+   "name": "String Ensemble",
+   "category": "Pads",
+   "root": 60,
+   "table": 0,
+   "seconds": 4.0
+  },
+  {
+   "id": "pad_supersaw",
+   "name": "Supersaw Pad",
+   "category": "Pads",
+   "root": 60,
+   "table": 0,
+   "seconds": 4.0
+  },
+  {
+   "id": "pad_analog",
+   "name": "Warm Analog",
+   "category": "Pads",
+   "root": 60,
+   "table": 0,
+   "seconds": 4.0
+  },
+  {
+   "id": "key_bell",
+   "name": "Bell",
+   "category": "Keys & Plucks",
+   "root": 60,
+   "table": 0,
+   "seconds": 3.5
+  },
+  {
+   "id": "key_stab",
+   "name": "Chord Stab",
+   "category": "Keys & Plucks",
+   "root": 60,
+   "table": 0,
+   "seconds": 1.2
+  },
+  {
+   "id": "key_epiano",
+   "name": "Electric Piano",
+   "category": "Keys & Plucks",
+   "root": 60,
+   "table": 0,
+   "seconds": 2.5
+  },
+  {
+   "id": "key_harp",
+   "name": "Harp",
+   "category": "Keys & Plucks",
+   "root": 60,
+   "table": 0,
+   "seconds": 2.5
+  },
+  {
+   "id": "key_kalimba",
+   "name": "Kalimba",
+   "category": "Keys & Plucks",
+   "root": 60,
+   "table": 0,
+   "seconds": 2.0
+  },
+  {
+   "id": "key_marimba",
+   "name": "Marimba",
+   "category": "Keys & Plucks",
+   "root": 60,
+   "table": 0,
+   "seconds": 1.2
+  },
+  {
+   "id": "key_musicbox",
+   "name": "Music Box",
+   "category": "Keys & Plucks",
+   "root": 72,
+   "table": 0,
+   "seconds": 2.5
+  },
+  {
+   "id": "key_guitar",
+   "name": "Nylon Pluck",
+   "category": "Keys & Plucks",
+   "root": 60,
+   "table": 0,
+   "seconds": 2.0
+  },
+  {
+   "id": "key_pizz",
+   "name": "Pizzicato",
+   "category": "Keys & Plucks",
+   "root": 60,
+   "table": 0,
+   "seconds": 0.8
+  },
+  {
+   "id": "key_piano",
+   "name": "Soft Piano",
+   "category": "Keys & Plucks",
+   "root": 60,
+   "table": 0,
+   "seconds": 3.0
+  },
+  {
+   "id": "lead_flute",
+   "name": "Breath Flute",
+   "category": "Leads",
+   "root": 60,
+   "table": 0,
+   "seconds": 2.2
+  },
+  {
+   "id": "lead_chip",
+   "name": "Chip Pulse",
+   "category": "Leads",
+   "root": 60,
+   "table": 0,
+   "seconds": 1.5
+  },
+  {
+   "id": "lead_saw",
+   "name": "Saw Lead",
+   "category": "Leads",
+   "root": 60,
+   "table": 0,
+   "seconds": 2.0
+  },
+  {
+   "id": "lead_scream",
+   "name": "Screamer",
+   "category": "Leads",
+   "root": 60,
+   "table": 0,
+   "seconds": 2.0
+  },
+  {
+   "id": "lead_square",
+   "name": "Square Lead",
+   "category": "Leads",
+   "root": 60,
+   "table": 0,
+   "seconds": 2.0
+  },
+  {
+   "id": "lead_sync",
+   "name": "Sync Lead",
+   "category": "Leads",
+   "root": 60,
+   "table": 0,
+   "seconds": 2.0
+  },
+  {
+   "id": "lead_whistle",
+   "name": "Whistle",
+   "category": "Leads",
+   "root": 72,
+   "table": 0,
+   "seconds": 2.0
+  },
+  {
+   "id": "vox_breath",
+   "name": "Breath",
+   "category": "Vocal",
+   "root": 60,
+   "table": 0,
+   "seconds": 2.0
+  },
+  {
+   "id": "vox_ah",
+   "name": "Vowel Ah",
+   "category": "Vocal",
+   "root": 60,
+   "table": 0,
+   "seconds": 2.2
+  },
+  {
+   "id": "vox_ee",
+   "name": "Vowel Ee",
+   "category": "Vocal",
+   "root": 60,
+   "table": 0,
+   "seconds": 2.2
+  },
+  {
+   "id": "vox_oh",
+   "name": "Vowel Oh",
+   "category": "Vocal",
+   "root": 60,
+   "table": 0,
+   "seconds": 2.2
+  },
+  {
+   "id": "vox_oo",
+   "name": "Vowel Oo",
+   "category": "Vocal",
+   "root": 60,
+   "table": 0,
+   "seconds": 2.2
+  },
+  {
+   "id": "vox_phrase",
+   "name": "Vowel Phrase",
+   "category": "Vocal",
+   "root": 60,
+   "table": 0,
+   "seconds": 2.5
+  },
+  {
+   "id": "tex_digital",
+   "name": "Digital Glitch",
+   "category": "Textures",
+   "root": 60,
+   "table": 0,
+   "seconds": 2.5
+  },
+  {
+   "id": "tex_hum",
+   "name": "Machine Hum",
+   "category": "Textures",
+   "root": 60,
+   "table": 0,
+   "seconds": 4.0
+  },
+  {
+   "id": "tex_metal",
+   "name": "Metal Drone",
+   "category": "Textures",
+   "root": 60,
+   "table": 0,
+   "seconds": 4.0
+  },
+  {
+   "id": "tex_insects",
+   "name": "Night Insects",
+   "category": "Textures",
+   "root": 60,
+   "table": 0,
+   "seconds": 4.0
+  },
+  {
+   "id": "tex_static",
+   "name": "Radio Static",
+   "category": "Textures",
+   "root": 60,
+   "table": 0,
+   "seconds": 3.5
+  },
+  {
+   "id": "tex_rain",
+   "name": "Rain",
+   "category": "Textures",
+   "root": 60,
+   "table": 0,
+   "seconds": 4.0
+  },
+  {
+   "id": "tex_underwater",
+   "name": "Underwater",
+   "category": "Textures",
+   "root": 60,
+   "table": 0,
+   "seconds": 4.0
+  },
+  {
+   "id": "tex_vinyl",
+   "name": "Vinyl Crackle",
+   "category": "Textures",
+   "root": 60,
+   "table": 0,
+   "seconds": 4.0
+  },
+  {
+   "id": "tex_wind",
+   "name": "Wind",
+   "category": "Textures",
+   "root": 60,
+   "table": 0,
+   "seconds": 4.0
+  },
+  {
+   "id": "drm_clap",
+   "name": "Clap",
+   "category": "Drums & Perc",
+   "root": 60,
+   "table": 0,
+   "seconds": 0.7
+  },
+  {
+   "id": "drm_hat_closed",
+   "name": "Closed Hat",
+   "category": "Drums & Perc",
+   "root": 60,
+   "table": 0,
+   "seconds": 0.25
+  },
+  {
+   "id": "drm_kick_deep",
+   "name": "Deep Kick",
+   "category": "Drums & Perc",
+   "root": 60,
+   "table": 0,
+   "seconds": 1.2
+  },
+  {
+   "id": "drm_loop",
+   "name": "Drum Loop 124",
+   "category": "Drums & Perc",
+   "root": 60,
+   "table": 0,
+   "seconds": 3.87
+  },
+  {
+   "id": "drm_perc",
+   "name": "FM Perc",
+   "category": "Drums & Perc",
+   "root": 60,
+   "table": 0,
+   "seconds": 0.5
+  },
+  {
+   "id": "drm_hat_loop",
+   "name": "Hat Loop 124",
+   "category": "Drums & Perc",
+   "root": 60,
+   "table": 0,
+   "seconds": 3.87
+  },
+  {
+   "id": "drm_kick",
+   "name": "Kick",
+   "category": "Drums & Perc",
+   "root": 60,
+   "table": 0,
+   "seconds": 0.7
+  },
+  {
+   "id": "drm_cowbell",
+   "name": "Metal Bell",
+   "category": "Drums & Perc",
+   "root": 60,
+   "table": 0,
+   "seconds": 0.8
+  },
+  {
+   "id": "drm_hat_open",
+   "name": "Open Hat",
+   "category": "Drums & Perc",
+   "root": 60,
+   "table": 0,
+   "seconds": 1.0
+  },
+  {
+   "id": "drm_rim",
+   "name": "Rim",
+   "category": "Drums & Perc",
+   "root": 60,
+   "table": 0,
+   "seconds": 0.25
+  },
+  {
+   "id": "drm_shaker",
+   "name": "Shaker",
+   "category": "Drums & Perc",
+   "root": 60,
+   "table": 0,
+   "seconds": 0.35
+  },
+  {
+   "id": "drm_shaker_loop",
+   "name": "Shaker Loop 124",
+   "category": "Drums & Perc",
+   "root": 60,
+   "table": 0,
+   "seconds": 3.87
+  },
+  {
+   "id": "drm_snare",
+   "name": "Snare",
+   "category": "Drums & Perc",
+   "root": 60,
+   "table": 0,
+   "seconds": 0.6
+  },
+  {
+   "id": "drm_tom",
+   "name": "Tom",
+   "category": "Drums & Perc",
+   "root": 60,
+   "table": 0,
+   "seconds": 0.9
+  },
+  {
+   "id": "fx_downlifter",
+   "name": "Downlifter",
+   "category": "FX & Risers",
+   "root": 60,
+   "table": 0,
+   "seconds": 3.0
+  },
+  {
+   "id": "fx_impact",
+   "name": "Impact",
+   "category": "FX & Risers",
+   "root": 60,
+   "table": 0,
+   "seconds": 3.0
+  },
+  {
+   "id": "fx_laser",
+   "name": "Laser",
+   "category": "FX & Risers",
+   "root": 60,
+   "table": 0,
+   "seconds": 0.8
+  },
+  {
+   "id": "fx_reverse",
+   "name": "Reverse Swell",
+   "category": "FX & Risers",
+   "root": 60,
+   "table": 0,
+   "seconds": 2.5
+  },
+  {
+   "id": "fx_riser",
+   "name": "Riser",
+   "category": "FX & Risers",
+   "root": 60,
+   "table": 0,
+   "seconds": 4.0
+  },
+  {
+   "id": "fx_siren",
+   "name": "Siren",
+   "category": "FX & Risers",
+   "root": 60,
+   "table": 0,
+   "seconds": 3.0
+  },
+  {
+   "id": "fx_sweep",
+   "name": "White Sweep",
+   "category": "FX & Risers",
+   "root": 60,
+   "table": 0,
+   "seconds": 3.0
+  },
+  {
+   "id": "wt_basic",
+   "name": "Basic Shapes",
+   "category": "Wavetable",
+   "root": 60,
+   "table": 2048,
+   "seconds": 2.97
+  },
+  {
+   "id": "wt_digital",
+   "name": "Digital Steps",
+   "category": "Wavetable",
+   "root": 60,
+   "table": 2048,
+   "seconds": 2.97
+  },
+  {
+   "id": "wt_fm",
+   "name": "FM Sweep",
+   "category": "Wavetable",
+   "root": 60,
+   "table": 2048,
+   "seconds": 2.97
+  },
+  {
+   "id": "wt_formant",
+   "name": "Formant Sweep",
+   "category": "Wavetable",
+   "root": 60,
+   "table": 2048,
+   "seconds": 2.97
+  },
+  {
+   "id": "wt_harmonic",
+   "name": "Harmonic Stack",
+   "category": "Wavetable",
+   "root": 60,
+   "table": 2048,
+   "seconds": 2.97
+  },
+  {
+   "id": "wt_pwm",
+   "name": "Pulse Width",
+   "category": "Wavetable",
+   "root": 60,
+   "table": 2048,
+   "seconds": 2.97
+  },
+  {
+   "id": "wt_soft",
+   "name": "Soft Saws",
+   "category": "Wavetable",
+   "root": 60,
+   "table": 2048,
+   "seconds": 2.97
+  },
+  {
+   "id": "wt_fold",
+   "name": "Wavefolder",
+   "category": "Wavetable",
+   "root": 60,
+   "table": 2048,
+   "seconds": 2.97
+  }
+ ]
+}

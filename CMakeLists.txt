@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(Spark VERSION 1.4.2 LANGUAGES C CXX)
+project(Spark VERSION 1.5.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -39,6 +39,11 @@ juce_add_binary_data(SparkAssets SOURCES
     Resources/Fonts/JetBrainsMono-Regular.ttf)
 set_target_properties(SparkAssets PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
+# The factory sound library (synthesised by tools/factory_sounds/make_sounds.py)
+file(GLOB SPARK_SOUND_FILES ${CMAKE_CURRENT_SOURCE_DIR}/Resources/Sounds/*.flac ${CMAKE_CURRENT_SOURCE_DIR}/Resources/Sounds/manifest.json)
+juce_add_binary_data(SparkSounds HEADER_NAME SparkSoundData.h NAMESPACE SparkSoundData SOURCES ${SPARK_SOUND_FILES})
+set_target_properties(SparkSounds PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
 set(SPARK_COMMON_SOURCES
     Source/Common/SparkLookAndFeel.cpp
     Source/Common/Lineage.cpp
@@ -49,6 +54,7 @@ set(SPARK_COMMON_SOURCES
     Source/Instrument/InstrumentPresets.cpp
     Source/Instrument/FxRack.cpp
     Source/Instrument/Modulation.cpp
+    Source/Instrument/FactorySounds.cpp
     Source/Instrument/Shapeshift.cpp)
 
 function(spark_configure target)
@@ -62,6 +68,7 @@ function(spark_configure target)
     target_link_libraries(${target}
         PRIVATE
             SparkAssets
+            SparkSounds
             juce::juce_audio_utils
             juce::juce_audio_formats
             juce::juce_dsp
@@ -114,7 +121,7 @@ if(SPARK_BUILD_TESTS)
     target_include_directories(SparkTests PRIVATE Source)
     target_compile_definitions(SparkTests PRIVATE
         JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 SPARK_TESTS=1 JUCE_MODAL_LOOPS_PERMITTED=1)
-    target_link_libraries(SparkTests PRIVATE SparkAssets
+    target_link_libraries(SparkTests PRIVATE SparkAssets SparkSounds
         juce::juce_audio_utils juce::juce_audio_formats juce::juce_dsp
         juce::juce_recommended_config_flags)
 endif()

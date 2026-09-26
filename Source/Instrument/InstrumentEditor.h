@@ -18,19 +18,23 @@ public:
 
     std::function<void()> onImport, onShapeshift, onExport;
     void setDragHover (bool h) { dragHover = h; repaint(); }
+    juce::Component* getImportButton() { return &importButton; }
 
     void paint (juce::Graphics&) override;
     void resized() override;
 
 private:
-    void timerCallback() override { repaint(); }
-    void changeListenerCallback (juce::ChangeBroadcaster*) override { repaint(); }
+    void timerCallback() override;   // repaints only when what it shows has changed
+    void changeListenerCallback (juce::ChangeBroadcaster*) override { refreshLock(); repaint(); }
+    void refreshLock();
 
     InstrumentProcessor& processor;
+    std::vector<float> lastShown;
+    PillButton lockButton { {}, PillButton::Style::lockToggle, Icon::unlock };
     PillButton grainTab { "GRAIN", PillButton::Style::segment };
     PillButton tableTab { "TABLE", PillButton::Style::segment };
     PillButton sampleTab { "SAMPLE", PillButton::Style::segment };
-    PillButton importButton { "Import" }, shapeshiftButton { "Shapeshift", PillButton::Style::goldSolid };
+    PillButton importButton { "Sounds", PillButton::Style::outline, Icon::chevronDown }, shapeshiftButton { "Shapeshift", PillButton::Style::goldSolid };
     PillButton exportButton { "Export", PillButton::Style::goldOutline };
     juce::ParameterAttachment modeAttachment;
     bool dragHover = false;
@@ -154,6 +158,7 @@ protected:
 private:
     void loadFile (const juce::File&);
     void chooseFileToImport();
+    void showSoundsMenu();
     void exportWavetable();
     void startShapeshift();
     void runShapeshift (const juce::File&);

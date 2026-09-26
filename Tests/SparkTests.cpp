@@ -5,6 +5,7 @@
 #include "Instrument/InstrumentProcessor.h"
 #include "Instrument/InstrumentEditor.h"
 #include "Instrument/Shapeshift.h"
+#include "Instrument/FactorySounds.h"
 #include "Instrument/FxPage.h"
 #include "Common/Envelope.h"
 
@@ -856,6 +857,7 @@ int main (int argc, char** argv)
             auto p = std::make_unique<InstrumentProcessor>();
             p->setRateAndBufferSizeDetails (sr, 256);
             p->prepareToPlay (sr, 256);
+            p->loadInitSound();
             p->setMode (InstrumentProcessor::tableMode);
             p->facetParam (InstrumentProcessor::space).setValueNotifyingHost (0.0f);
             p->facetParam (InstrumentProcessor::motion).setValueNotifyingHost (0.0f);
@@ -959,6 +961,7 @@ int main (int argc, char** argv)
             auto p = std::make_unique<InstrumentProcessor>();
             p->setRateAndBufferSizeDetails (sr, 256);
             p->prepareToPlay (sr, 256);
+            p->loadInitSound();
             p->setMode (InstrumentProcessor::tableMode);
             p->facetParam (InstrumentProcessor::space).setValueNotifyingHost (0.0f);
             p->facetParam (InstrumentProcessor::motion).setValueNotifyingHost (0.0f);
@@ -1028,6 +1031,7 @@ int main (int argc, char** argv)
             auto p = std::make_unique<InstrumentProcessor>();
             p->setRateAndBufferSizeDetails (sr, 256);
             p->prepareToPlay (sr, 256);
+            p->loadInitSound();
             p->setMode (InstrumentProcessor::tableMode);
             p->facetParam (InstrumentProcessor::space).setValueNotifyingHost (0.0f);
             p->facetParam (InstrumentProcessor::motion).setValueNotifyingHost (0.0f);
@@ -1201,6 +1205,7 @@ int main (int argc, char** argv)
             auto p = std::make_unique<InstrumentProcessor>();
             p->setRateAndBufferSizeDetails (sr, 256);
             p->prepareToPlay (sr, 256);
+            p->loadInitSound();
             p->setMode (InstrumentProcessor::tableMode);
             p->facetParam (InstrumentProcessor::space).setValueNotifyingHost (0.0f);
             setReal (*p, "attack", 0.0f);
@@ -1255,6 +1260,89 @@ int main (int argc, char** argv)
             check (juce::roundToInt (parsed ("subTune", "-19")) == -19 && juce::roundToInt (parsed ("subTune", "-2 oct")) == -24, "Sub pitch takes semitones or octaves");
             check (parseTypedValue (prm ("sustain"), "loud please") < 0.0f, "Text it can't read is ignored");
         }
+    }
+
+    // ---------------------------------------------------------------- factory sound library
+    std::cout << "Factory sounds" << std::endl;
+    {
+        const auto& all = factory::sounds();
+        check (all.size() >= 75, juce::String ((int) all.size()) + " factory sounds in " + juce::String (factory::categories().size()) + " categories");
+        int decoded = 0, inTune = 0, pitched = 0;
+        juce::StringArray offKey;
+        for (const auto& snd : all)
+        {
+            juce::AudioBuffer<float> audio;
+            double rate = 0;
+            if (! factory::decode (snd.id, audio, rate) || audio.getNumSamples() < 1000) continue;
+            ++decoded;
+            const bool tonal = snd.tableFrame == 0 && (snd.category == "Bass" || snd.category == "Pads" || snd.category == "Keys & Plucks" || snd.category == "Leads")
+                               && snd.id != "key_stab";
+            if (! tonal) continue;
+            ++pitched;
+            const float midi = shapeshift::detectMidiNote (audio, rate);
+            if (midi > 0 && std::abs (midi - snd.root) < 0.6f) ++inTune; else offKey.add (snd.id + "=" + juce::String (midi, 1));
+        }
+        check (decoded == (int) all.size(), "Every factory sound decodes (" + juce::String (decoded) + ")");
+        check (inTune >= pitched - 2, "Tonal sounds sit on their root note (" + juce::String (inTune) + " of " + juce::String (pitched) + ") " + offKey.joinIntoString (", "));
+
+        InstrumentProcessor p;
+        p.prepareToPlay (sr, 512);
+        int withSound = 0, missing = 0;
+        for (int i = 0; i < p.getNumFactoryPresets(); ++i)
+        {
+            const auto& pr = p.getPreset (i);
+            if (pr.sound.isEmpty()) continue;
+            ++withSound;
+            if (factory::find (pr.sound) == nullptr) ++missing;
+        }
+        check (withSound == p.getNumFactoryPresets() && missing == 0, "Every factory preset brings a library sound (" + juce::String (withSound) + ")");
+        check (p.getSource() != nullptr && p.getSource()->factoryId == p.getPreset (0).sound, "Spark opens with the first preset's sound");
+
+        // presets bring their sound while unlocked...
+        p.setSoundLocked (false);
+        int reese = -1;
+        for (int i = 0; i < p.getNumPresets(); ++i) if (p.getPreset (i).name == "Reese Engine") reese = i;
+        p.loadPreset (reese);
+        check (p.getSource()->factoryId == "bass_reese", "A preset loads its own sound");
+        // ...and keep yours once you've chosen one
+        juce::AudioBuffer<float> tone (1, (int) sr);
+        for (int i = 0; i < tone.getNumSamples(); ++i) tone.setSample (0, i, 0.4f * std::sin (6.2831853f * 220.0f * (float) i / (float) sr));
+        auto mine = outDir.getChildFile ("my-sound.wav");
+        writeWav (mine, tone, sr);
+        juce::String err;
+        p.loadFile (mine, err);
+        check (p.isSoundLocked(), "Dropping your own sound locks it");
+        p.loadPreset (reese + 1);
+        check (p.getSource()->name.contains ("my-sound"), "Presets then keep your sound");
+        p.setSoundLocked (false);
+        p.loadPreset (reese);
+        check (p.getSource()->factoryId == "bass_reese", "Unlocking lets presets bring theirs again");
+
+        // projects: library sounds are saved by name
+        juce::MemoryBlock st;
+        p.getStateInformation (st);
+        InstrumentProcessor q;
+        q.setStateInformation (st.getData(), (int) st.getSize());
+        check (q.getSource()->factoryId == "bass_reese" && st.getSize() < 40000,
+               "Projects save library sounds by name (" + juce::String ((int) st.getSize() / 1024) + " KB) and restore them");
+        check (! q.isSoundLocked(), "...with the lock state");
+
+        // picking from the library
+        p.loadFactorySound ("wt_fm");
+        check (p.getMode() == InstrumentProcessor::tableMode && p.isSoundLocked(), "Picking a wavetable from the library switches to Table and keeps it");
+        p.loadFactorySound ("drm_snare");
+        check (p.getMode() == InstrumentProcessor::sampleMode, "Drum hits open in Sample mode");
+
+        // user presets remember a library sound
+        p.setSoundLocked (false);
+        p.loadPreset (reese);
+        juce::String error;
+        const auto name = "Test Preset Sound " + juce::String (juce::Random::getSystemRandom().nextInt (100000));
+        p.saveUserPreset (name, error);
+        bool found = false;
+        for (int i = 0; i < p.getNumPresets(); ++i) if (p.getPreset (i).name == name) found = p.getPreset (i).sound == "bass_reese";
+        check (found, "User presets remember their library sound");
+        for (int i = 0; i < p.getNumPresets(); ++i) if (p.getPreset (i).name == name) p.deleteUserPreset (i);
     }
 
     // ---------------------------------------------------------------- undo / redo

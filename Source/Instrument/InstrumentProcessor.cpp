@@ -3,6 +3,7 @@
 #include "SparkVoice.h"
 #include "Common/Presets.h"
 #include "Shapeshift.h"
+#include "FactorySounds.h"
 
 namespace spark
 {
@@ -170,6 +171,7 @@ InstrumentProcessor::InstrumentProcessor()
     }
 
     installSource (makeBuiltInSource());
+    applyPresetSound (getPreset (getPresetIndex()));   // the first preset's sound (the base class couldn't do this yet)
 
     synth.addSound (new SparkSound());
     for (int i = 0; i < 16; ++i)
@@ -332,7 +334,53 @@ bool InstrumentProcessor::loadFile (const juce::File& file, juce::String& error)
             s->rootNote = midi; // pitched samples play in tune across the keyboard
     installSource (s);
     setMode (looksLikeTable ? tableMode : grainMode);
+    setSoundLocked (true);   // your own sound stays put while you browse presets
     return true;
+}
+
+bool InstrumentProcessor::loadFactorySound (const juce::String& id, bool fromPreset)
+{
+    const auto* info = factory::find (id);
+    juce::AudioBuffer<float> audio;
+    double sr = 44100.0;
+    if (info == nullptr || ! factory::decode (id, audio, sr))
+        return false;
+    if (auto current = getSource(); current != nullptr && current->factoryId == id && ! current->shapeshifted)
+        return true;   // already loaded
+    auto s = makeSource (std::move (audio), sr, info->name, {}, info->tableFrame);
+    s->rootNote = info->root;
+    s->factoryId = id;
+    installSource (s);
+    if (! fromPreset)
+    {
+        setMode (info->tableFrame > 0 ? tableMode : (info->category == "Drums & Perc" ? sampleMode : grainMode));
+        setSoundLocked (true);
+    }
+    return true;
+}
+
+void InstrumentProcessor::loadInitSound()
+{
+    installSource (makeBuiltInSource());
+    setSoundLocked (true);
+}
+
+void InstrumentProcessor::setSoundLocked (bool locked)
+{
+    if (soundLocked.exchange (locked) != locked)
+        sendChangeMessage();
+}
+
+void InstrumentProcessor::applyPresetSound (const Preset& p)
+{
+    if (! soundLocked.load() && p.sound.isNotEmpty())
+        loadFactorySound (p.sound, true);
+}
+
+juce::String InstrumentProcessor::currentSoundId() const
+{
+    auto s = getSource();
+    return s != nullptr && ! s->shapeshifted ? s->factoryId : juce::String();
 }
 
 bool InstrumentProcessor::shapeshift (const juce::File& file, juce::String& summary)
@@ -833,10 +881,16 @@ void InstrumentProcessor::writeExtraState (juce::ValueTree& extra)
         extra.setProperty ("fxLocks", lockedModules.joinIntoString (","), nullptr);
     }
     extra.setProperty ("chain", chainName, nullptr);
+    extra.setProperty ("soundLock", soundLocked.load(), nullptr);
 
     auto s = getSource();
     if (s == nullptr || s->name == "Spark Init")
         return;
+    if (s->factoryId.isNotEmpty() && ! s->shapeshifted)
+    {
+        extra.setProperty ("factorySound", s->factoryId, nullptr);   // library sounds are saved by name: tiny projects
+        return;
+    }
 
     extra.setProperty ("sourceName", s->name, nullptr);
     extra.setProperty ("sourceFile", s->file.getFullPathName(), nullptr);
@@ -855,6 +909,13 @@ void InstrumentProcessor::readExtraState (const juce::ValueTree& extra)
         lockedModules.removeEmptyStrings();
     }
     chainName = extra.getProperty ("chain", "Clean").toString();
+    // older projects: locked if they carried their own sound
+    soundLocked = extra.hasProperty ("soundLock") ? (bool) extra.getProperty ("soundLock")
+                                                   : (extra.hasProperty ("sourceAudio") || extra.hasProperty ("sourceFile"));
+
+    if (const auto factoryId = extra.getProperty ("factorySound").toString(); factoryId.isNotEmpty())
+        if (loadFactorySound (factoryId, true))
+            return;
 
     const auto embedded = extra.getProperty ("sourceAudio").toString();
     const juce::File file (extra.getProperty ("sourceFile").toString());

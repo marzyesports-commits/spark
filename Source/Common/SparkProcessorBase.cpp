@@ -295,6 +295,7 @@ void SparkProcessorBase::loadPreset (int index)
         if (locks[(size_t) i]) v[(size_t) i] = now[(size_t) i];
 
     applyFacetValues (v);
+    applyPresetSound (p);
     lineage.push (v, (juce::uint32) juce::DefaultHashFunctions::generateHash (p.category + p.name, 1 << 30), currentExtraValues());
     sendChangeMessage();
 }
@@ -333,6 +334,7 @@ void SparkProcessorBase::rescanUserPresets()
         p.name = xml->getStringAttribute ("name", f.getFileNameWithoutExtension());
         p.hint = xml->getStringAttribute ("hint", "Saved " + f.getLastModificationTime().formatted ("%d %b %Y"));
         p.file = f;
+        p.sound = xml->getStringAttribute ("sound");
         p.facets = currentFacetValues();
         for (auto* e : xml->getChildWithTagNameIterator ("PARAM"))
         {
@@ -373,6 +375,8 @@ bool SparkProcessorBase::saveUserPreset (const juce::String& rawName, juce::Stri
     xml.setAttribute ("kind", kind);
     xml.setAttribute ("name", name);
     xml.setAttribute ("version", 1);
+    if (const auto sound = currentSoundId(); sound.isNotEmpty())
+        xml.setAttribute ("sound", sound);
     const juce::StringArray skip { "mutate", "chaos", "freeze", "bypass" };
     for (auto* param : getParameters())
         if (auto* ranged = dynamic_cast<juce::RangedAudioParameter*> (param); ranged != nullptr && ! skip.contains (ranged->getParameterID()))

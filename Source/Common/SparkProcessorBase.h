@@ -23,6 +23,7 @@ struct Preset
     juce::String hint;                    // what kind of sample it suits
     FacetValues facets {};
     std::map<juce::String, float> extras; // other parameter id -> normalised value
+    juce::String sound;                   // factory sound this preset brings (instrument), empty = none
     juce::File file;                      // set for user presets
 };
 
@@ -143,7 +144,9 @@ public:
 protected:
     virtual void writeExtraState (juce::ValueTree&) {}
     virtual void readExtraState (const juce::ValueTree&) {}
-    virtual void migrateParameters (juce::ValueTree&) {}   // rename/convert parameters from older versions before loading
+    virtual void migrateParameters (juce::ValueTree&) {}
+    virtual void applyPresetSound (const Preset&) {}          // after a preset's parameters are set
+    virtual juce::String currentSoundId() const { return {}; } // saved with user presets   // rename/convert parameters from older versions before loading
     void setParam (const juce::String& id, float normalised);
 
 private:

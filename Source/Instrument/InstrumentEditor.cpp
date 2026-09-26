@@ -1,4 +1,5 @@
 #include "InstrumentEditor.h"
+#include "FactorySounds.h"
 #include "Shapeshift.h"
 
 namespace spark
@@ -16,8 +17,11 @@ SourcePanel::SourcePanel (InstrumentProcessor& p)
           repaint();
       })
 {
-    for (auto* b : { &grainTab, &tableTab, &sampleTab, &importButton, &shapeshiftButton, &exportButton })
+    for (auto* b : { &grainTab, &tableTab, &sampleTab, &importButton, &shapeshiftButton, &exportButton, &lockButton })
         addAndMakeVisible (b);
+    lockButton.setClickingTogglesState (false);
+    lockButton.onClick = [this] { processor.setSoundLocked (! processor.isSoundLocked()); };
+    refreshLock();
     for (auto* b : { &grainTab, &tableTab, &sampleTab })
     {
         b->setFontHeight (10.0f);
@@ -25,7 +29,7 @@ SourcePanel::SourcePanel (InstrumentProcessor& p)
     }
     grainTab.setTooltip ("Grain: play the sound as a cloud of tiny slices");
     tableTab.setTooltip ("Table: play the wavetable made from the sound");
-    importButton.setTooltip ("Load a sample or wavetable (you can also drag one onto Spark)");
+    importButton.setTooltip ("Spark's sound library, or import your own sample or wavetable (you can also drag one onto Spark)");
     sampleTab.setTooltip ("Sample: play the recording itself (after Shapeshift, this is the original to compare with)");
     shapeshiftButton.setTooltip ("Shapeshift: rebuild a note bounced from Serum, Serum 2, Vital or any synth, then reshape it");
     exportButton.setTooltip ("Save the wavetable, with Drive and Tone baked in, for Serum or Vital");
@@ -42,6 +46,29 @@ SourcePanel::SourcePanel (InstrumentProcessor& p)
     startTimerHz (24);
 }
 
+void SourcePanel::refreshLock()
+{
+    const bool locked = processor.isSoundLocked();
+    lockButton.setToggleState (locked, juce::dontSendNotification);
+    lockButton.setIcon (locked ? Icon::lock : Icon::unlock);
+    lockButton.setTooltip (locked ? "Locked: this sound stays when you change presets. Click to let presets bring their own sound"
+                                  : "Unlocked: each preset brings its own sound. Click to keep this one");
+}
+
+void SourcePanel::timerCallback()
+{
+    auto s = processor.getSource();
+    std::vector<float> now { processor.facetParam (InstrumentProcessor::position).getValue(),
+                             processor.facetParam (InstrumentProcessor::grain).getValue(),
+                             processor.facetParam (InstrumentProcessor::morph).getValue(),
+                             (float) processor.getMode(), (float) (juce::pointer_sized_int) s.get() };
+    if (now != lastShown)
+    {
+        lastShown = std::move (now);
+        repaint();
+    }
+}
+
 SourcePanel::~SourcePanel() { processor.removeChangeListener (this); }
 
 void SourcePanel::resized()
@@ -53,6 +80,7 @@ void SourcePanel::resized()
     importButton.setBounds (16, 204, w, 32);
     shapeshiftButton.setBounds (16 + w + 6, 204, w, 32);
     exportButton.setBounds (16 + 2 * (w + 6), 204, w, 32);
+    lockButton.setBounds (16, 169, 24, 24);
 }
 
 void SourcePanel::paint (juce::Graphics& g)
@@ -151,8 +179,9 @@ void SourcePanel::paint (juce::Graphics& g)
     g.setFont (fonts::body (12.0f));
     auto src = processor.getSource();
     g.drawText (src != nullptr && src->shapeshifted ? "Shapeshifted: TABLE is the rebuild, SAMPLE the original"
-                                                    : "Drop a sound, or Shapeshift a synth note",
-                juce::Rectangle<float> (16.0f, 170.0f, (float) getWidth() - 32.0f, 22.0f),
+                : processor.isSoundLocked() ? "Kept when you change presets"
+                                            : "Presets bring their own sound",
+                juce::Rectangle<float> (48.0f, 170.0f, (float) getWidth() - 64.0f, 22.0f),
                 juce::Justification::centredLeft, false);
 }
 
@@ -725,7 +754,7 @@ InstrumentEditor::InstrumentEditor (InstrumentProcessor& p)
         if (show) shapeEditor.toFront (true);
     };
 
-    source.onImport = [this] { chooseFileToImport(); };
+    source.onImport = [this] { showSoundsMenu(); };
     source.onShapeshift = [this] { startShapeshift(); };
     source.onExport = [this] { exportWavetable(); };
 }
@@ -757,6 +786,31 @@ void InstrumentEditor::loadFile (const juce::File& file)
     juce::String error;
     if (! processor.loadFile (file, error))
         showMessage ("Couldn't load that sound", error);
+}
+
+void InstrumentEditor::showSoundsMenu()
+{
+    // The library by category, with your own files at the top
+    juce::PopupMenu m;
+    m.setLookAndFeel (&getLookAndFeel());
+    m.addItem ("Import a sample or wavetable...", [this] { chooseFileToImport(); });
+    m.addItem ("Spark Init (plain tone)", [this] { processor.loadInitSound(); });
+    m.addSeparator();
+    m.addSectionHeader ("SPARK LIBRARY");
+    const auto current = processor.getSource();
+    for (const auto& category : factory::categories())
+    {
+        juce::PopupMenu sub;
+        for (const auto& snd : factory::sounds())
+            if (snd.category == category)
+                sub.addItem (snd.name, true, current != nullptr && current->factoryId == snd.id,
+                             [this, id = snd.id] { processor.loadFactorySound (id); });
+        m.addSubMenu (category, sub);
+    }
+    m.addSeparator();
+    m.addItem ("Keep this sound when changing presets", true, processor.isSoundLocked(),
+               [this] { processor.setSoundLocked (! processor.isSoundLocked()); });
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (source.getImportButton()));
 }
 
 void InstrumentEditor::chooseFileToImport()

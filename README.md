@@ -6,12 +6,14 @@ Formats: **VST3**, **Audio Unit** and **standalone app** on macOS (universal: Ap
 
 ## Presets
 
-Spark ships with **103 presets**, sorted into categories. Each preset notes what kind of sample it suits. Click the preset name at the top to open the browser. There you can pick a category, search by name or by sample type (try "808", "vocal" or "breaks"), use the arrow keys to audition, or press **Surprise me** for a random preset.
+Spark ships with **118 presets** and a **library of 82 sounds**. Presets are sorted into categories. Each preset notes what kind of sample it suits. Click the preset name at the top to open the browser. There you can pick a category, search by name or by sample type (try "808", "vocal" or "breaks"), use the arrow keys to audition, or press **Surprise me** for a random preset.
 
-Starters · **Bass** (808s, subs, reese, growls) · **Pads** · Keys & Plucks · Leads · **Vocal Chops** · Textures · **Drums & Perc** · FX & Risers · Wavetable
+Starters · **Bass** (808s, subs, reese, growls) · **Pads** · Keys & Plucks · Leads · **Vocal Chops** · Textures · **Drums & Perc** · FX & Risers · Wavetable · **Motion** (presets built around LFOs, macros, glide and layers)
+
+- **The sound library.** Every preset brings its own sound from Spark's library: basses and 808s, pads, keys, leads, synthesised vowel voices, textures, drum hits and loops, FX, and Serum-style wavetables. Every sound was synthesised from scratch for Spark (`tools/factory_sounds/make_sounds.py`), so it's all royalty-free. Browse them with **Sounds** in the SOURCE panel.
+- **Keep your own sound.** The lock under the waveform decides whether presets bring their sound or keep the one you have. Dropping in (or picking) a sound locks it, so presets then shape *your* sound; unlock to let presets bring theirs. Projects that use a library sound save just its name.
 
 - **Level-matched.** Presets are level-matched so switching doesn't jump in volume, and Spark has a transparent safety clipper on its output.
-- **Presets act on your sound.** They shape whatever sound is loaded; they don't load a sample. Drop in the kind of sound the preset's note suggests.
 - **Your own presets.** **Save** stores your own presets under **User**, as `.sparkpreset` files in `Documents/Spark/Presets`. They're easy to back up or share. Right-click a user preset to reveal or delete it.
 - **Locks still apply.** Locked facets stay put when you browse presets.
 - **Presets reset the FX rack** to its defaults (only the Space reverb on), so each preset sounds the same every time. Use **Chain** on the FX page to add effects back.
