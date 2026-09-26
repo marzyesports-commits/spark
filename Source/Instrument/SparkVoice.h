@@ -74,7 +74,9 @@ private:
         float gainL = 0.7f, gainR = 0.7f;
     };
 
-    void processChain (float* l, float* r, int n);
+    // tone/drive/resonance are normalised 0..1 (modulated); volume ramps from volStart to volEnd over the chunk
+    void processChain (float* l, float* r, int n, float toneNorm, float driveNorm, float resNorm, float volStart, float volEnd);
+    void computeModulation (int blockOffset, int n, float (&offsets)[mod::numDests]);
     void startGlide();
     void spawnGrain (const SourceData&, double ratio, float position, float grainSec, float motion, float scan);
     void renderGrains (float* left, float* right, int n, const SourceData&, double ratio,
@@ -102,6 +104,11 @@ private:
     int glideLeft = 0;           // samples of glide remaining
     double samplePos = 0.0;      // Sample mode play head
     double noteSamples = 0.0;    // time since note-on, for Morph scan
+
+    // per-voice LFOs (used when an LFO is set to Retrigger)
+    double lfoVoicePhase[mod::numLfos] {};
+    float lfoHeld[mod::numLfos] {}, lfoNext[mod::numLfos] {};
+    float volumeNow = 1.0f;
 
     juce::AudioBuffer<float> scratch;
 };

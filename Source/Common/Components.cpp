@@ -2,6 +2,16 @@
 
 namespace spark
 {
+bool isModDrag (const juce::DragAndDropTarget::SourceDetails& d)
+{
+    return d.description.toString().startsWith ("mod:");
+}
+
+int modDragSource (const juce::DragAndDropTarget::SourceDetails& d)
+{
+    return d.description.toString().fromFirstOccurrenceOf ("mod:", false, false).getIntValue();
+}
+
 // =====================================================================================
 juce::Path makeIcon (Icon icon, juce::Rectangle<float> a)
 {
@@ -249,6 +259,30 @@ void Header::paint (juce::Graphics& g)
     g.drawRoundedRectangle (tag.reduced (0.5f), 20.0f, 1.0f);
 }
 
+void Header::itemDragMove (const SourceDetails& d)
+{
+    int tab = -1;
+    const auto p = d.localPosition.toInt();
+    if (soundTab.getBounds().contains (p)) tab = 0;
+    else if (synthTab.getBounds().contains (p)) tab = 1;
+    else if (fxTab.getBounds().contains (p)) tab = 2;
+    if (tab != springTab)
+    {
+        springTab = tab;
+        if (tab >= 0) startTimer (350); else stopTimer();
+    }
+}
+
+void Header::timerCallback()
+{
+    stopTimer();
+    if (springTab >= 0)
+    {
+        setPage (springTab);
+        if (onPage) onPage (springTab);
+    }
+}
+
 void Header::setPage (int page)
 {
     soundTab.setToggleState (page == 0, juce::dontSendNotification);
@@ -389,7 +423,10 @@ void CoreView::timerCallback()
     ghostAlpha = juce::jmax (0.14f, ghostAlpha * std::pow (0.97f, dt * 30.0f));
 
     // Nothing moving: skip the repaint entirely (the ring is still unless Motion is up)
-    const bool idle = moving < 1.0e-4f && ! stormActive() && glow < 0.004f && ghostAlpha <= 0.1401f;
+    bool modulating = false;
+    for (int i = 0; i < numFacets; ++i)
+        if (std::abs (processor.getFacetModulation (i)) > 5.0e-4f) modulating = true;
+    const bool idle = moving < 1.0e-4f && ! stormActive() && glow < 0.004f && ghostAlpha <= 0.1401f && ! modulating;
     if (! idle || ! wasIdle)
         repaint();
     wasIdle = idle;
@@ -631,7 +668,7 @@ void CoreView::paint (juce::Graphics& g)
         const float span = juce::degreesToRadians (38.0f);
         const float v = processor.facetParam (i).getValue();
         const bool locked = processor.isLocked (i);
-        const bool active = (i == hovered || i == dragging);
+        const bool active = (i == hovered || i == dragging || i == dropHover);
 
         juce::Path track;
         track.addCentredArc (centre.x, centre.y, arcR, arcR, 0.0f, a0, a0 + span, true);
@@ -642,6 +679,26 @@ void CoreView::paint (juce::Graphics& g)
         fill.addCentredArc (centre.x, centre.y, arcR, arcR, 0.0f, a0, a0 + juce::jmax (0.001f, span * v), true);
         g.setColour (locked ? text2 : gold);
         g.strokePath (fill, juce::PathStrokeType (active ? 10.0f : 8.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+
+        if (i == dropHover)
+        {
+            g.setColour (goldHi.withAlpha (0.35f));
+            g.strokePath (track, juce::PathStrokeType (18.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        }
+        // live modulation: a thin outer arc from the set value to where it is being pushed, and a dot
+        const float m = processor.getFacetModulation (i);
+        if (std::abs (m) > 5.0e-4f)
+        {
+            const float mv = juce::jlimit (0.0f, 1.0f, v + m);
+            const float r2 = arcR + 11.0f;
+            juce::Path modArc;
+            modArc.addCentredArc (centre.x, centre.y, r2, r2, 0.0f, a0 + span * juce::jmin (v, mv), a0 + span * juce::jmax (v, mv) + 0.001f, true);
+            g.setColour (text.withAlpha (0.55f));
+            g.strokePath (modArc, juce::PathStrokeType (2.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+            const float am = a0 + span * mv;
+            g.setColour (text);
+            g.fillEllipse (juce::Rectangle<float> (6.0f, 6.0f).withCentre ({ centre.x + r2 * std::sin (am), centre.y - r2 * std::cos (am) }));
+        }
 
         const juce::Point<float> lp (centre.x + labelR * std::sin (c), centre.y - labelR * std::cos (c));
         g.setFont (fonts::mono (10.0f).withExtraKerningFactor (0.15f));
@@ -666,6 +723,41 @@ void CoreView::paint (juce::Graphics& g)
     }
 
     paintStorm (g);
+}
+
+void CoreView::itemDragMove (const SourceDetails& d)
+{
+    // anywhere outside the SPARK button picks the nearest facet
+    const auto p = d.localPosition.toFloat();
+    int f = -1;
+    if (p.getDistanceFrom (centre) > 70.0f)
+    {
+        float angle = std::atan2 (p.x - centre.x, centre.y - p.y);
+        if (angle < 0) angle += juce::MathConstants<float>::twoPi;
+        f = juce::roundToInt (juce::radiansToDegrees (angle) / 45.0f) % numFacets;
+    }
+    if (f != dropHover) { dropHover = f; repaint(); }
+}
+
+void CoreView::itemDropped (const SourceDetails& d)
+{
+    const int f = dropHover;
+    dropHover = -1;
+    repaint();
+    if (f >= 0 && onModDrop)
+        onModDrop (modDragSource (d), f);
+}
+
+void CoreView::flashFacet (int facet)
+{
+    if (facet < 0 || facet >= numFacets)
+        return;
+    const auto tip = facetTip (facet, processor.facetParam (facet).getValue());
+    const auto outward = (tip - centre) / juce::jmax (1.0f, tip.getDistanceFrom (centre));
+    spawnSparks (tip, outward, 18, 260.0f, 2.2f);
+    spawnBolt (tip, centre + outward * 70.0f, 1.0f);
+    glow = juce::jmax (glow, 0.5f);
+    repaint();
 }
 
 int CoreView::facetAt (juce::Point<float> p) const
@@ -924,6 +1016,11 @@ void ArcKnob::paint (juce::Graphics& g)
     g.setColour (active ? text : muted);
     g.setFont (fonts::mono (10.0f));
     g.drawText (param.getCurrentValueAsText(), textArea.removeFromTop (13.0f), juce::Justification::centred, false);
+    if (dropHover)
+    {
+        g.setColour (goldHi.withAlpha (0.3f));
+        g.drawEllipse (juce::Rectangle<float> (size + 4.0f, size + 4.0f).withCentre (c), 5.0f);
+    }
 }
 
 void ArcKnob::mouseDown (const juce::MouseEvent&)
@@ -974,6 +1071,38 @@ FacetList::FacetList (SparkProcessorBase& p) : processor (p)
 }
 
 FacetList::~FacetList() { processor.removeChangeListener (this); }
+
+void FacetList::timerCallback()
+{
+    bool changed = false;
+    for (int i = 0; i < numFacets; ++i)
+    {
+        const float v = processor.facetParam (i).getValue(), m = processor.getFacetModulation (i);
+        if (std::abs (v - shownValues[(size_t) i * 2]) > 1.0e-5f || std::abs (m - shownValues[(size_t) i * 2 + 1]) > 1.0e-4f)
+        {
+            shownValues[(size_t) i * 2] = v;
+            shownValues[(size_t) i * 2 + 1] = m;
+            changed = true;
+        }
+    }
+    if (changed)
+        repaint();
+}
+
+void FacetList::itemDragMove (const SourceDetails& d)
+{
+    const int r = rowAt (d.localPosition.toInt());
+    if (r != dropHover) { dropHover = r; repaint(); }
+}
+
+void FacetList::itemDropped (const SourceDetails& d)
+{
+    const int r = dropHover;
+    dropHover = -1;
+    repaint();
+    if (r >= 0 && onModDrop)
+        onModDrop (modDragSource (d), r);
+}
 
 void FacetList::changeListenerCallback (juce::ChangeBroadcaster*)
 {
@@ -1039,11 +1168,29 @@ void FacetList::paint (juce::Graphics& g)
         g.setFont (fonts::mono (11.0f));
         g.drawText (processor.facetParam (i).getCurrentValueAsText(), textRow, juce::Justification::centredRight, false);
 
+        if (i == dropHover)
+        {
+            g.setColour (gold.withAlpha (0.12f));
+            g.fillRoundedRectangle (r.toFloat().reduced (0.0f, 2.0f), 8.0f);
+            g.setColour (gold);
+            g.drawRoundedRectangle (r.toFloat().reduced (0.5f, 2.5f), 8.0f, 1.0f);
+        }
         auto bar = barBounds (i).toFloat();
         g.setColour (line);
         g.fillRoundedRectangle (bar, 2.0f);
+        const float v = processor.facetParam (i).getValue();
         g.setColour (processor.isLocked (i) ? text2 : gold);
-        g.fillRoundedRectangle (bar.withWidth (juce::jmax (2.0f, bar.getWidth() * processor.facetParam (i).getValue())), 2.0f);
+        g.fillRoundedRectangle (bar.withWidth (juce::jmax (2.0f, bar.getWidth() * v)), 2.0f);
+        const float m = processor.getFacetModulation (i);
+        if (std::abs (m) > 5.0e-4f)
+        {
+            const float mv = juce::jlimit (0.0f, 1.0f, v + m);
+            const float x0 = bar.getX() + bar.getWidth() * juce::jmin (v, mv), x1 = bar.getX() + bar.getWidth() * juce::jmax (v, mv);
+            g.setColour (text.withAlpha (0.6f));
+            g.fillRect (juce::Rectangle<float> (x0, bar.getBottom() + 2.0f, juce::jmax (1.0f, x1 - x0), 2.0f));
+            g.setColour (text);
+            g.fillEllipse (juce::Rectangle<float> (5.0f, 5.0f).withCentre ({ bar.getX() + bar.getWidth() * mv, bar.getBottom() + 3.0f }));
+        }
     }
 }
 
@@ -1610,6 +1757,8 @@ SparkEditorBase::SparkEditorBase (SparkProcessorBase& p, bool isFx)
     lineage.setBounds (24, 540, 1072, 150);
 
     header.onSettings = [this] (juce::Component& anchor) { showSettingsMenu (anchor); };
+    core.onModDrop = [this] (int src, int dest) { handleModDrop (src, dest); };
+    facets.onModDrop = [this] (int src, int dest) { handleModDrop (src, dest); };
     header.onBrowse = [this] { setBrowserVisible (! browser.isVisible()); };
 
     contentComponent.addChildComponent (browser);

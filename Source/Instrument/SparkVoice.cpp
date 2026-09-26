@@ -80,6 +80,13 @@ void SparkVoice::startNote (int midiNote, float vel, juce::SynthesiserSound*, in
     const double startPhase = random.nextDouble();
     for (auto& ph : phases) ph = startPhase;
     lfoPhase = random.nextFloat() * juce::MathConstants<float>::twoPi;
+    for (int l = 0; l < mod::numLfos; ++l)
+    {
+        lfoVoicePhase[l] = 0.0;
+        lfoHeld[l] = random.nextFloat() * 2.0f - 1.0f;
+        lfoNext[l] = random.nextFloat() * 2.0f - 1.0f;
+    }
+    volumeNow = -1.0f;   // set on the first chunk
 
     filter.reset();
     driveAmount = processor.params.facet[InstrumentProcessor::drive]->load();
@@ -132,8 +139,8 @@ void SparkVoice::stopNote (float, bool allowTailOff)
     }
 }
 
-// Per note: drive -> low-pass (swept by the tone envelope) -> amp envelope.
-void SparkVoice::processChain (float* l, float* r, int n)
+// Per note: drive -> filter (swept by the tone envelope) -> amp envelope.
+void SparkVoice::processChain (float* l, float* r, int n, float toneNorm, float driveNorm, float resNorm, float volStart, float volEnd)
 {
     auto& p = processor.params;
     const auto ampSettings = p.amp.settings();
@@ -144,12 +151,12 @@ void SparkVoice::processChain (float* l, float* r, int n)
     const float velTone = p.toneVelocity->load();
     const float octaves = p.toneAmount->load() * 5.0f * (1.0f - velTone * (1.0f - velocity));
 
-    const float targetDrive = p.facet[InstrumentProcessor::drive]->load();
+    const float targetDrive = driveNorm;
     const float keyTrack = p.keyTrack->load();
-    const float targetCutoff = fmt::cutoffHz (p.facet[InstrumentProcessor::tone]->load())
-                             * std::exp2 ((pitchNote - 60.0f) / 12.0f * keyTrack);
+    const float targetCutoff = fmt::cutoffHz (toneNorm) * std::exp2 ((pitchNote - 60.0f) / 12.0f * keyTrack);
     const float nyquistSafe = (float) getSampleRate() * 0.45f;
-    const float q = fmt::filterQ (p.resonance->load());
+    const float q = fmt::filterQ (resNorm);
+    const float volStep = (volEnd - volStart) / (float) juce::jmax (1, n);
     const int type = juce::roundToInt (p.filterType->load());
     const double sr = getSampleRate();
 
@@ -168,10 +175,42 @@ void SparkVoice::processChain (float* l, float* r, int n)
 
         const float g = 1.0f + driveAmount * 12.0f;
         const float makeup = 1.0f / std::sqrt (g);
-        const float env = ampEnv.next (ampSettings) * ampGain;
+        const float env = ampEnv.next (ampSettings) * ampGain * (volStart + volStep * (float) i);
         l[i] = filter.process (0, std::tanh (g * l[i]) * makeup, type) * env;
         r[i] = filter.process (1, std::tanh (g * r[i]) * makeup, type) * env;
     }
+}
+
+void SparkVoice::computeModulation (int blockOffset, int n, float (&offsets)[mod::numDests])
+{
+    const auto& ms = processor.modState;
+    float src[mod::numSources] {};
+    for (int l = 0; l < mod::numLfos; ++l)
+    {
+        if (! ms.usesLfo[l]) continue;
+        if (ms.retrigger[l])
+        {
+            src[mod::lfo1 + l] = mod::shapeValue (ms.shape[l], (float) lfoVoicePhase[l], lfoHeld[l], lfoNext[l]);
+            lfoVoicePhase[l] += ms.lfoInc[l] * n;
+            if (lfoVoicePhase[l] >= 1.0)
+            {
+                lfoVoicePhase[l] -= std::floor (lfoVoicePhase[l]);
+                lfoHeld[l] = lfoNext[l];
+                lfoNext[l] = random.nextFloat() * 2.0f - 1.0f;
+            }
+        }
+        else
+        {
+            double ph = ms.lfoPhase[l] + ms.lfoInc[l] * blockOffset;
+            ph -= std::floor (ph);
+            src[mod::lfo1 + l] = mod::shapeValue (ms.shape[l], (float) ph, ms.held[l], ms.next[l]);
+        }
+    }
+    for (int m = 0; m < mod::numMacros; ++m) src[mod::macro1 + m] = ms.macro[m];
+    src[mod::modWheel] = ms.modWheel;
+    src[mod::aftertouch] = ms.aftertouch;
+    src[mod::velocity] = velocity;
+    ms.route (src, offsets);
 }
 
 void SparkVoice::pitchWheelMoved (int value)
@@ -309,11 +348,13 @@ void SparkVoice::renderNextBlock (juce::AudioBuffer<float>& out, int startSample
 
     auto& p = processor.params;
 
-    const float pitchSt = fmt::semitoneValue (p.facet[InstrumentProcessor::pitch]->load());
-    const float position = p.facet[InstrumentProcessor::position]->load();
-    const float grainSec = fmt::grainSeconds (p.facet[InstrumentProcessor::grain]->load());
-    const float morph = p.facet[InstrumentProcessor::morph]->load();
-    const float motion = p.facet[InstrumentProcessor::motion]->load();
+    const auto& ms = processor.modState;
+    const bool modulated = ms.active();
+    float base[mod::numDests];
+    for (int d = 0; d < InstrumentProcessor::numFacetsInstrument; ++d)
+        base[d] = p.facet[d]->load();
+    base[mod::resonance] = p.resonance->load();
+    base[mod::volume] = 1.0f;
     const int mode = juce::roundToInt (p.mode->load());
     const bool tableMode = mode == InstrumentProcessor::tableMode;
     const bool sampleMode = mode == InstrumentProcessor::sampleMode;
@@ -323,8 +364,19 @@ void SparkVoice::renderNextBlock (juce::AudioBuffer<float>& out, int startSample
 
     while (numSamples > 0)
     {
-        // short chunks while gliding so the pitch moves smoothly
-        const int n = juce::jmin (numSamples, glideLeft > 0 ? 32 : chunkSize);
+        // short chunks while gliding or modulating, so pitch and modulation move smoothly
+        const int n = juce::jmin (numSamples, (glideLeft > 0 || modulated) ? 32 : chunkSize);
+        float offs[mod::numDests] {};
+        if (modulated)
+            computeModulation (startSample, n, offs);
+        auto value = [&] (int d) { return juce::jlimit (0.0f, 1.0f, base[d] + offs[d]); };
+        const float pitchSt = fmt::semitoneValue (value (mod::pitch));
+        const float position = value (mod::position);
+        const float grainSec = fmt::grainSeconds (value (mod::grain));
+        const float morph = value (mod::morph);
+        const float motion = value (mod::motion);
+        const float volume = juce::jmax (0.0f, 1.0f + offs[mod::volume]);
+        if (volumeNow < 0.0f) volumeNow = volume;
         const float semis = pitchNote - source->rootNote + pitchSt + bendSemitones;
         const double ratio = std::pow (2.0, semis / 12.0) * (source->sampleRate / getSampleRate());
         const double baseHz = 440.0 * std::pow (2.0, ((double) pitchNote - 69.0 + pitchSt + bendSemitones) / 12.0);
@@ -348,7 +400,8 @@ void SparkVoice::renderNextBlock (juce::AudioBuffer<float>& out, int startSample
             renderGrains (l, r, n, *source, ratio, position, grainSec, motion, scan);
         }
 
-        processChain (l, r, n);
+        processChain (l, r, n, value (mod::tone), value (mod::drive), value (mod::resonance), volumeNow, volume);
+        volumeNow = volume;
 
         if (glideLeft > 0)
         {

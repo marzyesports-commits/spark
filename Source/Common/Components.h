@@ -11,6 +11,11 @@ enum class Icon { none, chevronLeft, chevronRight, chevronDown, settings, undo, 
 juce::Path makeIcon (Icon, juce::Rectangle<float> area);
 
 // Rounded pill button in Spark's styles.
+// Modulation drags carry "mod:<source index>" as their description.
+bool isModDrag (const juce::DragAndDropTarget::SourceDetails&);
+int modDragSource (const juce::DragAndDropTarget::SourceDetails&);
+using ModDropHandler = std::function<void (int source, int dest)>;
+
 class PillButton : public juce::Button
 {
 public:
@@ -34,7 +39,9 @@ private:
 
 // Top bar: logo, preset browser with generation counter, plugin kind, settings.
 class Header : public juce::Component,
-               private juce::ChangeListener
+               public juce::DragAndDropTarget,
+               private juce::ChangeListener,
+               private juce::Timer
 {
 public:
     Header (SparkProcessorBase&, bool isFx);
@@ -50,8 +57,16 @@ public:
     void mouseExit (const juce::MouseEvent&) override;
     void mouseUp (const juce::MouseEvent&) override;
 
+    // Dragging a modulation source over a page tab opens that page, so you can drop onto what's there.
+    bool isInterestedInDragSource (const SourceDetails& d) override { return isModDrag (d); }
+    void itemDragMove (const SourceDetails&) override;
+    void itemDragExit (const SourceDetails&) override { stopTimer(); springTab = -1; }
+    void itemDropped (const SourceDetails&) override { stopTimer(); springTab = -1; }
+
 private:
     void changeListenerCallback (juce::ChangeBroadcaster*) override { repaint(); }
+    void timerCallback() override;
+    int springTab = -1;
     bool presetHover = false;
 
     SparkProcessorBase& processor;
@@ -69,6 +84,7 @@ private:
 // and the SPARK button in the middle.
 class CoreView : public juce::Component,
                  public juce::SettableTooltipClient,
+                 public juce::DragAndDropTarget,
                  private juce::Timer,
                  private juce::ChangeListener
 {
@@ -86,7 +102,15 @@ public:
     void mouseDoubleClick (const juce::MouseEvent&) override;
     void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
 
+    bool isInterestedInDragSource (const SourceDetails& d) override { return isModDrag (d); }
+    void itemDragMove (const SourceDetails&) override;
+    void itemDragExit (const SourceDetails&) override { dropHover = -1; repaint(); }
+    void itemDropped (const SourceDetails&) override;
+    ModDropHandler onModDrop;
+    void flashFacet (int facet);   // sparks and a bolt on a facet (e.g. when modulation lands on it)
+
 private:
+    int dropHover = -1;
     class SparkButton : public juce::Button
     {
     public:
@@ -184,16 +208,25 @@ private:
     juce::ParameterAttachment attachment;
     juce::String label;
     float dragStart = 0.0f;
-    bool hover = false, dragging = false;
+    bool hover = false, dragging = false, dropHover = false;
 };
 
 // Small arc knob for effect controls (drag up/down, Shift = fine, double-click = reset).
 class ArcKnob : public juce::Component,
-                public juce::SettableTooltipClient
+                public juce::SettableTooltipClient,
+                public juce::DragAndDropTarget
 {
 public:
     ArcKnob (juce::RangedAudioParameter&, const juce::String& label);
     std::function<bool()> isActive; // gold when true, grey when false
+
+    // Set both to make this knob a modulation drop target
+    int modDest = -1;
+    ModDropHandler onModDrop;
+    bool isInterestedInDragSource (const SourceDetails& d) override { return modDest >= 0 && onModDrop != nullptr && isModDrag (d); }
+    void itemDragEnter (const SourceDetails&) override { dropHover = true; repaint(); }
+    void itemDragExit (const SourceDetails&) override { dropHover = false; repaint(); }
+    void itemDropped (const SourceDetails& d) override { dropHover = false; repaint(); onModDrop (modDragSource (d), modDest); }
     void paint (juce::Graphics&) override;
     void mouseEnter (const juce::MouseEvent&) override { hover = true; repaint(); }
     void mouseExit (const juce::MouseEvent&) override { hover = false; repaint(); }
@@ -208,11 +241,12 @@ private:
     juce::ParameterAttachment attachment;
     juce::String label;
     float dragStart = 0.0f;
-    bool hover = false, dragging = false;
+    bool hover = false, dragging = false, dropHover = false;
 };
 
 // Right-hand facet list with value bars and per-facet locks.
 class FacetList : public juce::Component,
+                  public juce::DragAndDropTarget,
                   private juce::Timer,
                   private juce::ChangeListener
 {
@@ -226,8 +260,16 @@ public:
     void mouseUp (const juce::MouseEvent&) override;
     void mouseDoubleClick (const juce::MouseEvent&) override;
 
+    bool isInterestedInDragSource (const SourceDetails& d) override { return isModDrag (d); }
+    void itemDragMove (const SourceDetails&) override;
+    void itemDragExit (const SourceDetails&) override { dropHover = -1; repaint(); }
+    void itemDropped (const SourceDetails&) override;
+    ModDropHandler onModDrop;
+
 private:
-    void timerCallback() override { repaint(); }
+    void timerCallback() override;   // repaints only when a value or its modulation changed
+    std::array<float, numFacets * 2> shownValues {};
+    int dropHover = -1;
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
     juce::Rectangle<int> rowBounds (int i) const;
     juce::Rectangle<int> barBounds (int i) const;
@@ -324,7 +366,8 @@ private:
 
 // Base editor shared by both plugins: scales a fixed 1120x720 design to the window,
 // and lays out the header, core, amounts, facets and lineage. Subclasses fill the left column.
-class SparkEditorBase : public juce::AudioProcessorEditor
+class SparkEditorBase : public juce::AudioProcessorEditor,
+                        public juce::DragAndDropContainer
 {
 public:
     SparkEditorBase (SparkProcessorBase&, bool isFx);
@@ -346,6 +389,8 @@ protected:
     void setBrowserVisible (bool);
     Header& getHeader() noexcept { return header; }
     virtual void hideOtherOverlays() {}
+    virtual void handleModDrop (int /*source*/, int /*dest*/) {}
+    CoreView& getCore() noexcept { return core; }
     void promptToSavePreset();
 
     SparkProcessorBase& sparkProcessor;

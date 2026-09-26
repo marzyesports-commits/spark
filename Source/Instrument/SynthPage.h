@@ -22,6 +22,22 @@ private:
     juce::OwnedArray<PillButton> buttons;
 };
 
+// The little handle you drag from a modulation source onto a facet or knob.
+class ModGrip : public juce::Component,
+                public juce::SettableTooltipClient
+{
+public:
+    explicit ModGrip (int source);
+    void paint (juce::Graphics&) override;
+    void mouseEnter (const juce::MouseEvent&) override { hover = true; repaint(); }
+    void mouseExit (const juce::MouseEvent&) override { hover = false; repaint(); }
+    void mouseDrag (const juce::MouseEvent&) override;
+
+private:
+    int source;
+    bool hover = false;
+};
+
 // A titled card of knobs on the SYNTH page.
 class SynthCard : public juce::Component
 {
@@ -33,16 +49,14 @@ public:
 protected:
     ArcKnob& addKnob (juce::RangedAudioParameter&, const juce::String& label, const juce::String& tooltip);
     ChoiceSegments* segments = nullptr;   // optional, shown under the title
-
-private:
-    juce::String title, blurb;
     juce::OwnedArray<ArcKnob> knobs;
+    juce::String title, blurb;
 };
 
 class FilterCard : public SynthCard
 {
 public:
-    explicit FilterCard (InstrumentProcessor&);
+    FilterCard (InstrumentProcessor&, ModDropHandler);
 
 private:
     ChoiceSegments type;
@@ -58,16 +72,93 @@ private:
     ChoiceSegments mode;
 };
 
-// The SYNTH page: how notes play and how the filter shapes them.
+class MacroCard : public SynthCard
+{
+public:
+    explicit MacroCard (InstrumentProcessor&);
+    void resized() override;
+
+private:
+    juce::OwnedArray<ModGrip> grips;
+};
+
+class LfoCard : public juce::Component,
+                private juce::Timer
+{
+public:
+    LfoCard (InstrumentProcessor&, int lfo);
+    void paint (juce::Graphics&) override;
+    void resized() override;
+
+private:
+    void timerCallback() override;
+    void refresh();
+    void showShapeMenu();
+    juce::Rectangle<float> waveArea() const;
+
+    InstrumentProcessor& processor;
+    int lfo;
+    ModGrip grip;
+    PillButton shapeButton { "Sine", PillButton::Style::outline, Icon::chevronDown };
+    PillButton syncButton { "SYNC", PillButton::Style::lockToggle };
+    PillButton retrigButton { "RETRIG", PillButton::Style::lockToggle };
+    ArcKnob rate, division;
+    juce::ParameterAttachment shapeAttachment, syncAttachment, retrigAttachment;
+    float shownPhase = -1.0f;
+};
+
+// One routing: SOURCE -> DESTINATION, amount bar, clear.
+class MatrixRow : public juce::Component,
+                  public juce::SettableTooltipClient
+{
+public:
+    MatrixRow (InstrumentProcessor&, int slot);
+    void paint (juce::Graphics&) override;
+    void mouseDown (const juce::MouseEvent&) override;
+    void mouseDrag (const juce::MouseEvent&) override;
+    void mouseUp (const juce::MouseEvent&) override;
+    void mouseDoubleClick (const juce::MouseEvent&) override;
+
+private:
+    juce::Rectangle<float> srcArea() const, dstArea() const, amountArea() const, clearArea() const;
+    int source() const, dest() const;
+    void showAddMenu();
+
+    InstrumentProcessor& processor;
+    int slot;
+    juce::ParameterAttachment srcAttachment, dstAttachment, amtAttachment;
+    bool draggingAmount = false;
+};
+
+class MatrixCard : public juce::Component,
+                   private juce::ChangeListener
+{
+public:
+    explicit MatrixCard (InstrumentProcessor&);
+    ~MatrixCard() override;
+    void paint (juce::Graphics&) override;
+    void resized() override;
+
+private:
+    void changeListenerCallback (juce::ChangeBroadcaster*) override;
+    InstrumentProcessor& processor;
+    juce::OwnedArray<MatrixRow> rows;
+    PillButton lockButton { {}, PillButton::Style::lockToggle, Icon::unlock };
+};
+
+// The SYNTH page: filter, voice mode, and modulation.
 class SynthPage : public juce::Component
 {
 public:
-    explicit SynthPage (InstrumentProcessor&);
+    SynthPage (InstrumentProcessor&, ModDropHandler onModDrop);
     void paint (juce::Graphics&) override;
     void resized() override;
 
 private:
     FilterCard filter;
     PlayCard play;
+    MacroCard macros;
+    LfoCard lfo1, lfo2;
+    MatrixCard matrix;
 };
 } // namespace spark

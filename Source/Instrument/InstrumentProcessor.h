@@ -6,6 +6,7 @@
 #include "Common/Wavetable.h"
 #include "Common/Envelope.h"
 #include "FxRack.h"
+#include "Modulation.h"
 
 namespace spark
 {
@@ -62,7 +63,7 @@ class InstrumentProcessor : public SparkProcessorBase,
                             private juce::Timer
 {
 public:
-    enum Facet { pitch, position, grain, morph, tone, drive, motion, space };
+    enum Facet { pitch, position, grain, morph, tone, drive, motion, space, numFacetsInstrument };
     enum Mode { grainMode = 0, tableMode = 1, sampleMode = 2 };
     enum VoiceMode { poly = 0, mono = 1, legato = 2 };
     enum FilterType { lowPass = 0, highPass = 1, bandPass = 2, notch = 3 };
@@ -86,6 +87,7 @@ public:
 
     // ---- effects rack
     std::vector<juce::RangedAudioParameter*> getRandomisableExtras() const override;
+    float getFacetModulation (int facet) const override;
     bool isModuleLocked (const juce::String& moduleId) const;
     void setModuleLocked (const juce::String& moduleId, bool);
     void sparkEffects();            // roll only the enabled, unlocked effects
@@ -135,6 +137,17 @@ public:
     // Audio thread only: the note a new mono voice glides from (-1 = no glide). Set by SparkSynth.
     int glideFromNote = -1;
 
+    // ---- modulation
+    mod::Params modParams;
+    mod::BlockState modState;                                   // audio thread: this block's routing and LFO phases
+    std::array<std::atomic<float>, mod::numDests> liveMod {};   // for the UI: current offset on each destination
+    std::array<std::atomic<float>, mod::numLfos> liveLfo {};    // for the UI: each LFO's current value
+    std::array<std::atomic<float>, mod::numLfos> liveLfoPhase {};
+    // Adds a routing in the first free slot (or updates an existing one). Returns the slot, or -1 if all 8 are used.
+    int assignModulation (int source, int dest, float amount);
+    void clearModulation (int slot);
+    float defaultAmountFor (int dest) const;
+
     // ---- AudioProcessor
     const juce::String getName() const override { return "Spark"; }
     bool acceptsMidi() const override { return true; }
@@ -170,8 +183,12 @@ private:
     juce::StringArray lockedModules;
     mutable juce::CriticalSection lockLock;
     juce::String chainName { "Clean" };
+    bool effectsOnlyRoll = false;
     juce::String lastShapeshift;
     juce::SmoothedValue<float> levelSmooth;
+    void updateModulation (int numSamples, const juce::MidiBuffer&, double bpm, double ppq, bool playing);
+    juce::Random modRandom;
+    double lastSyncCycle[mod::numLfos] {};
     double currentSampleRate = 44100.0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (InstrumentProcessor)

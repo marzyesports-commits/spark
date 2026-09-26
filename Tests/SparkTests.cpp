@@ -86,6 +86,56 @@ juce::AudioBuffer<float> renderNotes (InstrumentProcessor& p, double sr, const s
     return out;
 }
 
+struct Ev { double t; juce::MidiMessage msg; };
+
+// Renders a list of timed MIDI events (seconds)
+juce::AudioBuffer<float> renderEvents (InstrumentProcessor& p, double sr, std::vector<Ev> events, double total)
+{
+    const int block = 256;
+    const int len = (int) (total * sr);
+    juce::AudioBuffer<float> out (2, len), buf (2, block);
+    std::sort (events.begin(), events.end(), [] (const Ev& a, const Ev& b) { return a.t < b.t; });
+    size_t next = 0;
+    for (int pos = 0; pos < len; pos += block)
+    {
+        const int n = juce::jmin (block, len - pos);
+        juce::AudioBuffer<float> view (buf.getArrayOfWritePointers(), 2, n);
+        juce::MidiBuffer midi;
+        while (next < events.size() && (int) (events[next].t * sr) < pos + n)
+        {
+            midi.addEvent (events[next].msg, juce::jmax (0, (int) (events[next].t * sr) - pos));
+            ++next;
+        }
+        p.processBlock (view, midi);
+        for (int c = 0; c < 2; ++c) out.copyFrom (c, pos, view, c, 0, n);
+    }
+    return out;
+}
+
+juce::AudioBuffer<float> slice (const juce::AudioBuffer<float>& b, double sr, double t0, double t1)
+{
+    const int s0 = (int) (t0 * sr), n = (int) ((t1 - t0) * sr);
+    juce::AudioBuffer<float> out (b.getNumChannels(), n);
+    for (int c = 0; c < b.getNumChannels(); ++c) out.copyFrom (c, 0, b, c, s0, n);
+    return out;
+}
+
+// fraction of energy below ~300 Hz (one-pole split), for comparing filter types
+float lowFraction (const juce::AudioBuffer<float>& b, double sr)
+{
+    const float a = 1.0f - std::exp (-juce::MathConstants<float>::twoPi * 300.0f / (float) sr);
+    double lo = 0, all = 0; float z = 0;
+    const float* d = b.getReadPointer (0);
+    for (int i = 0; i < b.getNumSamples(); ++i) { z += a * (d[i] - z); lo += (double) z * z; all += (double) d[i] * d[i]; }
+    return all > 0 ? (float) (lo / all) : 0.0f;
+}
+
+void setReal (InstrumentProcessor& p, const juce::String& id, float value)
+{
+    auto* prm = p.apvts.getParameter (id);
+    prm->setValueNotifyingHost (prm->convertTo0to1 (value));
+}
+
 void snapshot (juce::AudioProcessorEditor* ed, const juce::File& f, float scale = 1.0f)
 {
     ed->setSize (juce::roundToInt (1120 * scale), juce::roundToInt (720 * scale));
@@ -788,6 +838,282 @@ int main (int argc, char** argv)
         check (std::abs (r.getSource()->rootNote - 57.0f) < 0.1f, "Dropped samples get their root note detected (" + shapeshift::noteName (r.getSource()->rootNote) + ")");
     }
 
+    // ---------------------------------------------------------------- play modes and filter (stage 1)
+    std::cout << "Play modes and filter" << std::endl;
+    {
+        auto fresh = [&]
+        {
+            auto p = std::make_unique<InstrumentProcessor>();
+            p->setRateAndBufferSizeDetails (sr, 256);
+            p->prepareToPlay (sr, 256);
+            p->setMode (InstrumentProcessor::tableMode);
+            p->facetParam (InstrumentProcessor::space).setValueNotifyingHost (0.0f);
+            p->facetParam (InstrumentProcessor::motion).setValueNotifyingHost (0.0f);
+            p->facetParam (InstrumentProcessor::morph).setValueNotifyingHost (0.0f);
+            setReal (*p, "attack", 0.0f);
+            return p;
+        };
+        auto on = [] (double t, int n) { return Ev { t, juce::MidiMessage::noteOn (1, n, 0.8f) }; };
+        auto off = [] (double t, int n) { return Ev { t, juce::MidiMessage::noteOff (1, n) }; };
+        auto noteAt = [&] (const juce::AudioBuffer<float>& b, double t0, double t1) { return shapeshift::detectMidiNote (slice (b, sr, t0, t1), sr); };
+
+        // filter types at the same cutoff
+        std::map<int, float> lows;
+        for (int type = 0; type < 4; ++type)
+        {
+            auto p = fresh();
+            p->facetParam (InstrumentProcessor::tone).setValueNotifyingHost (0.42f);
+            setReal (*p, "filterType", (float) type);
+            auto b = renderEvents (*p, sr, { on (0.0, 45), off (0.8, 45) }, 0.8);
+            lows[type] = lowFraction (slice (b, sr, 0.2, 0.7), sr);
+        }
+        check (lows[0] > lows[1] * 3.0f, "Low-pass keeps the lows, high-pass removes them (" + juce::String (lows[0], 2) + " vs " + juce::String (lows[1], 2) + ")");
+        check (lows[2] < lows[0] && lows[3] < lows[0] + 0.01f, "Band-pass and notch shape the sound differently");
+
+        // resonance adds a peak
+        float rms[2];
+        for (int k = 0; k < 2; ++k)
+        {
+            auto p = fresh();
+            p->facetParam (InstrumentProcessor::tone).setValueNotifyingHost (0.5f);
+            p->apvts.getParameter ("resonance")->setValueNotifyingHost (k == 0 ? 0.1f : 0.85f);
+            auto b = renderEvents (*p, sr, { on (0.0, 45), off (0.8, 45) }, 0.8);
+            rms[k] = stats (b, (int) (0.2 * sr), (int) (0.5 * sr)).rms;
+        }
+        check (rms[1] > rms[0] * 1.2f, "Resonance adds a peak at the cutoff (" + juce::String (rms[1] / rms[0], 2) + "x louder)");
+
+        // key tracking opens the filter for high notes
+        float hi[2];
+        for (int k = 0; k < 2; ++k)
+        {
+            auto p = fresh();
+            p->facetParam (InstrumentProcessor::tone).setValueNotifyingHost (0.35f);
+            p->apvts.getParameter ("keyTrack")->setValueNotifyingHost ((float) k);
+            auto b = renderEvents (*p, sr, { on (0.0, 84), off (0.6, 84) }, 0.6);
+            hi[k] = stats (b, (int) (0.2 * sr), (int) (0.3 * sr)).rms;
+        }
+        check (hi[1] > hi[0] * 1.5f, "Key tracking opens the filter on high notes");
+
+        // Legato: one voice, slides between overlapping keys, back to the held key on release
+        {
+            auto p = fresh();
+            setReal (*p, "voiceMode", 2.0f);
+            auto b = renderEvents (*p, sr, { on (0.0, 57), on (0.6, 64), off (1.2, 64), off (1.8, 57) }, 2.0);
+            const float n1 = noteAt (b, 0.15, 0.55), n2 = noteAt (b, 0.75, 1.15), n3 = noteAt (b, 1.35, 1.75);
+            check (juce::roundToInt (n1) == 57 && juce::roundToInt (n2) == 64 && juce::roundToInt (n3) == 57,
+                   "Legato plays one note at a time and returns to the held key (" + juce::String (n1, 1) + ", " + juce::String (n2, 1) + ", " + juce::String (n3, 1) + ")");
+            auto poly = fresh();
+            auto pb = renderEvents (*poly, sr, { on (0.0, 57), on (0.6, 64), off (1.2, 64), off (1.8, 57) }, 2.0);
+            check (stats (b, (int) (0.75 * sr), (int) (0.4 * sr)).rms < stats (pb, (int) (0.75 * sr), (int) (0.4 * sr)).rms * 0.85f,
+                   "Poly plays both keys, Legato only one");
+        }
+        // Mono retriggers the envelope, Legato doesn't
+        {
+            float level[2];
+            for (int k = 0; k < 2; ++k)
+            {
+                auto p = fresh();
+                setReal (*p, "voiceMode", k == 0 ? 1.0f : 2.0f);
+                p->apvts.getParameter ("decay")->setValueNotifyingHost (0.12f);
+                p->apvts.getParameter ("sustain")->setValueNotifyingHost (0.25f);
+                auto b = renderEvents (*p, sr, { on (0.0, 57), on (0.6, 60), off (1.0, 60), off (1.0, 57) }, 1.1);
+                level[k] = stats (b, (int) (0.6 * sr), (int) (0.06 * sr)).rms;
+            }
+            check (level[0] > level[1] * 1.6f, "Mono restarts the envelope on each key, Legato slides without restarting");
+        }
+        // Glide: halfway through a 0.5 s glide from A2 to A3 the pitch is about halfway
+        {
+            auto p = fresh();
+            setReal (*p, "voiceMode", 2.0f);
+            p->apvts.getParameter ("glide")->setValueNotifyingHost (0.5f);   // 2 * 0.5^2 = 0.5 s
+            auto b = renderEvents (*p, sr, { on (0.0, 45), on (0.6, 57), off (1.6, 57), off (1.6, 45) }, 1.6);
+            const float mid = noteAt (b, 0.80, 0.90), end = noteAt (b, 1.25, 1.55);
+            check (mid > 49.0f && mid < 54.0f && juce::roundToInt (end) == 57,
+                   "Glide slides the pitch (" + juce::String (mid, 1) + " midway, " + juce::String (end, 1) + " at the end)");
+        }
+        // Pitch-bend range
+        {
+            auto p = fresh();
+            setReal (*p, "bendRange", 12.0f);
+            auto b = renderEvents (*p, sr, { Ev { 0.0, juce::MidiMessage::pitchWheel (1, 16383) }, on (0.01, 45), off (0.6, 45) }, 0.6);
+            const float n = noteAt (b, 0.1, 0.55);
+            check (std::abs (n - 57.0f) < 0.3f, "Pitch-bend range of 12 bends an octave (" + juce::String (n, 2) + ")");
+        }
+    }
+
+    // ---------------------------------------------------------------- modulation (stage 2)
+    std::cout << "Modulation: LFOs, macros, matrix" << std::endl;
+    {
+        auto make = [&]
+        {
+            auto p = std::make_unique<InstrumentProcessor>();
+            p->setRateAndBufferSizeDetails (sr, 256);
+            p->prepareToPlay (sr, 256);
+            p->setMode (InstrumentProcessor::tableMode);
+            p->facetParam (InstrumentProcessor::space).setValueNotifyingHost (0.0f);
+            p->facetParam (InstrumentProcessor::motion).setValueNotifyingHost (0.0f);
+            setReal (*p, "attack", 0.0f);
+            return p;
+        };
+        auto held = [&] (InstrumentProcessor& p, double secs)
+        {
+            return renderEvents (p, sr, { Ev { 0.0, juce::MidiMessage::noteOn (1, 45, 0.8f) }, Ev { secs, juce::MidiMessage::noteOff (1, 45) } }, secs);
+        };
+        // Envelope of short-window RMS (10 ms)
+        auto windows = [&] (const juce::AudioBuffer<float>& b, double t0, double t1)
+        {
+            std::vector<float> e;
+            const int w = (int) (0.01 * sr);
+            for (int i = (int) (t0 * sr); i + w < (int) (t1 * sr); i += w) e.push_back (stats (b, i, w).rms);
+            return e;
+        };
+        auto spread = [] (const std::vector<float>& e)
+        {
+            const auto [lo, hi] = std::minmax_element (e.begin(), e.end());
+            return *hi / juce::jmax (1.0e-6f, *lo);
+        };
+
+        // no modulation: steady; LFO on Tone: the level (brightness) swings at the LFO rate
+        {
+            auto p = make();
+            p->facetParam (InstrumentProcessor::tone).setValueNotifyingHost (0.45f);
+            const auto steady = spread (windows (held (*p, 2.0), 0.5, 1.9));
+            auto q = make();
+            q->facetParam (InstrumentProcessor::tone).setValueNotifyingHost (0.45f);
+            q->apvts.getParameter (mod::lfoParam (0, "Rate"))->setValueNotifyingHost (std::log (2.0f / 0.02f) / std::log (1000.0f));   // 2 Hz
+            check (q->assignModulation (mod::lfo1, mod::tone, 0.3f) == 0, "Drag-assign puts LFO 1 -> Tone in slot 1");
+            auto b = held (*q, 2.0);
+            const auto env = windows (b, 0.5, 1.9);
+            check (spread (env) > steady * 1.8f, "LFO 1 on Tone makes the sound swing (" + juce::String (spread (env), 1) + "x vs " + juce::String (steady, 1) + "x)");
+            // count cycles by crossings of the average level: 2 Hz over 1.4 s -> 2.8 cycles
+            float meanLevel = 0;
+            for (auto e : env) meanLevel += e;
+            meanLevel /= (float) env.size();
+            int crossings = 0;
+            for (size_t i = 1; i < env.size(); ++i)
+                if ((env[i - 1] < meanLevel) != (env[i] < meanLevel)) ++crossings;
+            const float cycles = (float) crossings / 2.0f;
+            check (cycles >= 2.0f && cycles <= 3.5f, "It swings at the LFO rate (" + juce::String (cycles, 1) + " cycles in 1.4 s at 2 Hz)");
+            check (q->getFacetModulation (InstrumentProcessor::tone) != 0.0f, "The ring and facet list can show live modulation");
+        }
+        // macro -> Tone opens the filter
+        {
+            auto p = make();
+            p->facetParam (InstrumentProcessor::tone).setValueNotifyingHost (0.3f);
+            p->assignModulation (mod::macro1, mod::tone, 0.5f);
+            const float closed = stats (held (*p, 0.5), (int) (0.2 * sr), (int) (0.25 * sr)).rms;
+            p->apvts.getParameter (mod::macroParam (0))->setValueNotifyingHost (1.0f);
+            const float open = stats (held (*p, 0.5), (int) (0.2 * sr), (int) (0.25 * sr)).rms;
+            check (open > closed * 1.5f, "Macro 1 turned up opens the filter it's linked to");
+        }
+        // tempo-synced LFO on volume follows the host tempo: 1/4 at 120 BPM = 2 Hz
+        {
+            struct Host : juce::AudioPlayHead
+            {
+                double t = 0;
+                juce::Optional<PositionInfo> getPosition() const override
+                {
+                    PositionInfo i; i.setBpm (120.0); i.setIsPlaying (true); i.setPpqPosition (t * 2.0); return i;
+                }
+            } host;
+            auto p = make();
+            p->setPlayHead (&host);
+            setReal (*p, mod::lfoParam (0, "Sync"), 1.0f);
+            setReal (*p, mod::lfoParam (0, "Div"), 4.0f);    // 1/4
+            setReal (*p, mod::lfoParam (0, "Shape"), (float) mod::square);
+            p->assignModulation (mod::lfo1, mod::volume, -0.9f);
+            juce::AudioBuffer<float> b (2, (int) (2.0 * sr)), blk (2, 256);
+            for (int pos = 0; pos < b.getNumSamples(); pos += 256)
+            {
+                host.t = pos / sr;
+                juce::MidiBuffer m;
+                if (pos == 0) m.addEvent (juce::MidiMessage::noteOn (1, 45, 0.8f), 0);
+                juce::AudioBuffer<float> v (blk.getArrayOfWritePointers(), 2, juce::jmin (256, b.getNumSamples() - pos));
+                p->processBlock (v, m);
+                for (int c = 0; c < 2; ++c) b.copyFrom (c, pos, v, c, 0, v.getNumSamples());
+            }
+            p->setPlayHead (nullptr);
+            // square wave at 2 Hz: loud for 0.25 s then quiet for 0.25 s
+            const float a = stats (b, (int) (1.02 * sr), (int) (0.2 * sr)).rms, q = stats (b, (int) (1.27 * sr), (int) (0.2 * sr)).rms;
+            check (juce::jmax (a, q) > juce::jmin (a, q) * 4.0f, "Tempo-synced LFO chops the volume on the beat (" + juce::String (juce::jmax (a, q) / juce::jmax (1e-6f, juce::jmin (a, q)), 1) + "x)");
+        }
+        // velocity as a source
+        {
+            float lv[2];
+            for (int k = 0; k < 2; ++k)
+            {
+                auto p = make();
+                setReal (*p, "ampVelocity", 0.0f);
+                p->assignModulation (mod::velocity, mod::volume, 1.0f);
+                auto b = renderEvents (*p, sr, { Ev { 0.0, juce::MidiMessage::noteOn (1, 45, k == 0 ? 0.2f : 1.0f) }, Ev { 0.5, juce::MidiMessage::noteOff (1, 45) } }, 0.5);
+                lv[k] = stats (b, (int) (0.2 * sr), (int) (0.2 * sr)).rms;
+            }
+            check (lv[1] > lv[0] * 1.4f, "Velocity can modulate volume");
+        }
+        // CPU: an 8-note chord for 4 s, without and with 3 modulation routings
+        {
+            double secs[2];
+            for (int k = 0; k < 2; ++k)
+            {
+                auto p = make();
+                if (k == 1)
+                {
+                    p->assignModulation (mod::lfo1, mod::tone, 0.3f);
+                    p->assignModulation (mod::lfo2, mod::morph, 0.4f);
+                    p->assignModulation (mod::macro1, mod::pitch, 0.02f);
+                }
+                std::vector<Ev> ev;
+                for (int n : { 45, 52, 57, 60, 64, 67, 69, 72 }) ev.push_back ({ 0.0, juce::MidiMessage::noteOn (1, n, 0.8f) });
+                const double t0 = juce::Time::getMillisecondCounterHiRes();
+                renderEvents (*p, sr, ev, 4.0);
+                secs[k] = (juce::Time::getMillisecondCounterHiRes() - t0) * 0.001;
+            }
+            std::cout << "    8 voices for 4 s: " << juce::String (secs[0] / 4.0 * 100.0, 1) << "% of one core plain, "
+                      << juce::String (secs[1] / 4.0 * 100.0, 1) << "% modulated" << std::endl;
+            check (secs[1] < secs[0] * 1.6 + 0.05, "Modulation adds little CPU");
+        }
+        // matrix bookkeeping, Spark, state
+        {
+            auto p = make();
+            int filled = 0;
+            for (int s = mod::lfo1; s <= mod::macro4; ++s)
+                for (int d : { mod::tone, mod::morph })
+                    if (p->assignModulation (s, d, 0.2f) >= 0) ++filled;
+            check (filled == 8 && p->assignModulation (mod::modWheel, mod::drive, 0.2f) == -1, "8 slots, then it says they're full");
+            check (p->assignModulation (mod::lfo1, mod::tone, -0.4f) == 0, "Assigning the same routing again just changes its amount");
+            p->clearModulation (3);
+            check (juce::roundToInt (p->modParams.src[3]->load()) == mod::none, "Clearing a slot frees it");
+
+            auto amounts = [&] { std::vector<float> v; for (int k = 0; k < mod::numSlots; ++k) v.push_back (p->modParams.amt[k]->load()); return v; };
+            const auto before = amounts();
+            bool moved = false;
+            for (int i = 0; i < 6 && ! moved; ++i)
+            {
+                p->spark();
+                const auto now = amounts();
+                for (int k = 0; k < mod::numSlots; ++k) moved = moved || std::abs (now[(size_t) k] - before[(size_t) k]) > 1.0e-3f;
+            }
+            check (moved, "Spark also rolls modulation amounts");
+            p->setModuleLocked ("mod", true);
+            const float lockedAmt = p->modParams.amt[0]->load();
+            for (int i = 0; i < 4; ++i) p->spark();
+            check (std::abs (p->modParams.amt[0]->load() - lockedAmt) < 1.0e-6f, "Locking the matrix keeps Spark off it");
+            p->setModuleLocked ("mod", false);
+
+            juce::MemoryBlock state;
+            p->getStateInformation (state);
+            InstrumentProcessor q;
+            q.setStateInformation (state.getData(), (int) state.getSize());
+            bool same = true;
+            for (int s = 0; s < mod::numSlots; ++s)
+                same = same && q.modParams.src[s]->load() == p->modParams.src[s]->load() && q.modParams.dst[s]->load() == p->modParams.dst[s]->load()
+                            && std::abs (q.modParams.amt[s]->load() - p->modParams.amt[s]->load()) < 1.0e-5f;
+            check (same, "Modulation saves and loads with the project");
+            p->loadPreset (0);
+            check (juce::roundToInt (p->modParams.src[0]->load()) == mod::none, "Loading a preset clears modulation it doesn't use");
+        }
+    }
+
     // ---------------------------------------------------------------- user presets
     std::cout << "User presets: save, reload, delete" << std::endl;
     {
@@ -869,9 +1195,43 @@ int main (int argc, char** argv)
         p.apvts.getParameter ("resonance")->setValueNotifyingHost (0.45f);
         p.apvts.getParameter ("voiceMode")->setValueNotifyingHost (0.5f);
         p.apvts.getParameter ("glide")->setValueNotifyingHost (0.3f);
+        p.assignModulation (mod::lfo1, mod::tone, 0.35f);
+        p.assignModulation (mod::macro1, mod::morph, 0.5f);
+        p.assignModulation (mod::lfo2, mod::volume, -0.4f);
+        p.apvts.getParameter (mod::lfoParam (1, "Sync"))->setValueNotifyingHost (1.0f);
+        p.apvts.getParameter (mod::lfoParam (1, "Shape"))->setValueNotifyingHost (5.0f / 6.0f);
         if (auto* ie = dynamic_cast<InstrumentEditor*> (ed.get()))
             ie->showPage (1);
         snapshot (ed.get(), outDir.getChildFile ("ui-synth-page.png"));
+        {
+            // the SOUND page while modulation runs: render a little audio so the live values update
+            juce::AudioBuffer<float> buf (2, 512);
+            for (int i = 0; i < 40; ++i) { juce::MidiBuffer m; p.processBlock (buf, m); }
+            if (auto* ie = dynamic_cast<InstrumentEditor*> (ed.get()))
+                ie->showPage (0);
+            snapshot (ed.get(), outDir.getChildFile ("ui-modulated.png"));
+        }
+        {
+            // drop Macro 2 onto the Drive arc (lower left of the ring) and onto the Pitch row of the facet list
+            std::function<CoreView* (juce::Component*)> findCore = [&] (juce::Component* c) -> CoreView*
+            {
+                if (auto* cv = dynamic_cast<CoreView*> (c)) return cv;
+                for (auto* ch : c->getChildren()) if (auto* f = findCore (ch)) return f;
+                return nullptr;
+            };
+            auto* core = findCore (ed.get());
+            const auto centre = core->getLocalBounds().getCentre();
+            const float a = juce::degreesToRadians (225.0f);
+            const juce::Point<int> at (centre.x + juce::roundToInt (186.0f * std::sin (a)), centre.y - juce::roundToInt (186.0f * std::cos (a)));
+            juce::DragAndDropTarget::SourceDetails d ("mod:" + juce::String (mod::macro2), nullptr, at);
+            check (core->isInterestedInDragSource (d), "The ring accepts modulation drags");
+            core->itemDragMove (d);
+            core->itemDropped (d);
+            bool found = false;
+            for (int s = 0; s < mod::numSlots; ++s)
+                found = found || (juce::roundToInt (p.modParams.src[s]->load()) == mod::macro2 && juce::roundToInt (p.modParams.dst[s]->load()) == mod::drive);
+            check (found, "Dropping Macro 2 on the Drive arc routes Macro 2 -> Drive");
+        }
         check (true, "FX page snapshot written");
         ed.reset();
     }

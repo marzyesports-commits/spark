@@ -142,6 +142,7 @@ public:
 protected:
     void addExtraMenuItems (juce::PopupMenu&) override;
     void hideOtherOverlays() override;
+    void handleModDrop (int source, int dest) override;
 
 private:
     void loadFile (const juce::File&);

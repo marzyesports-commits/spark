@@ -47,6 +47,7 @@ set(SPARK_COMMON_SOURCES
     Source/Common/Wavetable.cpp
     Source/Instrument/InstrumentPresets.cpp
     Source/Instrument/FxRack.cpp
+    Source/Instrument/Modulation.cpp
     Source/Instrument/Shapeshift.cpp)
 
 function(spark_configure target)

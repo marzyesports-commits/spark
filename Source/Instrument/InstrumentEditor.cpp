@@ -623,7 +623,7 @@ bool ShapeEditor::keyPressed (const juce::KeyPress& k)
 
 // =====================================================================================
 InstrumentEditor::InstrumentEditor (InstrumentProcessor& p)
-    : SparkEditorBase (p, false), processor (p), source (p), shape (p), shapeEditor (p), synthPage (p), fxPage (p)
+    : SparkEditorBase (p, false), processor (p), source (p), shape (p), shapeEditor (p), synthPage (p, [this] (int src, int dest) { handleModDrop (src, dest); }), fxPage (p)
 {
     auto col = leftColumn();
     source.setBounds (col.removeFromTop (252));
@@ -727,6 +727,18 @@ void InstrumentEditor::hideOtherOverlays()
     synthPage.setVisible (false);
     fxPage.setVisible (false);
     getHeader().setPage (0);
+}
+
+void InstrumentEditor::handleModDrop (int source, int dest)
+{
+    const int slot = processor.assignModulation (source, dest, processor.defaultAmountFor (dest));
+    if (slot < 0)
+    {
+        showMessage ("All 8 modulation slots are in use", "Clear one in the MOD MATRIX on the SYNTH page, then try again.");
+        return;
+    }
+    if (dest < InstrumentProcessor::numFacetsInstrument)
+        getCore().flashFacet (dest);
 }
 
 void InstrumentEditor::showPage (int page)

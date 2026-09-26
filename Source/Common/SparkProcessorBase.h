@@ -117,6 +117,8 @@ public:
 
     // ---- visuals: 'n' values in -1..1 describing the current sound as a ring
     virtual void getCoreShape (std::vector<float>& out, int n) = 0;
+    // Live modulation offset on a facet (normalised units), for drawing. 0 when nothing modulates it.
+    virtual float getFacetModulation (int) const { return 0.0f; }
 
     const juce::String& getKind() const noexcept { return kind; }
 
