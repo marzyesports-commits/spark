@@ -112,7 +112,18 @@ jobs:
           if-no-files-found: ignore
 
       - name: Publish release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: v${{ env.VERSION }}
+          name: Spark ${{ env.VERSION }}
+          target_commitish: ${{ github.sha }}
+          make_latest: true
+          body: |
+            **Spark** (instrument) and **Spark FX** (effect) for macOS 11+, Apple Silicon and Intel.
+
+            Download **Spark-${{ env.VERSION }}-macOS.pkg** below. It isn't signed with an Apple Developer ID yet, so right-click it, choose **Open**, then **Open** again.
+            Then in Ableton: Settings → Plug-Ins → turn on VST3 system folders → Rescan.
+
+            The `-plugins.zip` holds the same VST3, AU and app bundles if you'd rather install them by hand.
           files: dist/*
