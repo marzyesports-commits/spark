@@ -47,6 +47,14 @@ Starters · **Bass** (808s, subs, reese, growls) · **Pads** · Keys & Plucks ·
   - **Curves.** Drag the small circle in the middle of a slope to bend its curve: *punchy* for snappy hits, *swell* for slow blooms.
   - **Velocity.** This sets how much playing harder makes notes louder, or deepens the tone sweep.
   - **Big editor.** Every number can be dragged (Shift for fine moves, double-click to reset). The ⤢ button opens a large editor with both envelopes side by side.
+- **SYNTH page.** Click **SYNTH** at the top.
+  - **Filter:** low-pass, high-pass, band-pass or notch, with resonance and key tracking. Cutoff is the Tone facet.
+  - **Layers:** a sine **sub** (one or two octaves down) and a **noise** layer with a colour control from dark rumble to bright hiss. Both run through the filter and envelopes with the rest of the note.
+  - **Play:** **Poly**, **Mono** (each key restarts the envelopes) or **Legato** (overlapping keys slide without restarting), plus **Glide**, pitch-bend range and velocity.
+  - **Modulation:** two **LFOs** (7 shapes, free or synced to tempo, shared or restarting on each note), four **macros**, and the mod wheel, aftertouch and velocity. The **mod matrix** has 8 slots, each routing a source to a facet, resonance or volume.
+  - **Assigning modulation:** drag an LFO's or macro's handle onto a facet on the ring, a facet in the list, or the CUTOFF or RES knob. Hover over the **SOUND** tab while dragging to get to the facets. Or click **+ add** in the matrix. A modulated facet shows a white marker that moves with it.
+  - **Spark and Breed** also vary the modulation, macros and layers you're using. The lock on the matrix keeps them off the modulation.
+- **Sparks and lightning.** Moving a facet throws sparks off its arc and fires lightning into the core; SPARK, Breed and preset changes set off a burst. It animates only while something moves, so it costs nothing when the sound is still.
 - **FX page.** Click **FX** at the top. Seven effects run in order: **Distortion** → **EQ** → **Chorus** → **Grains** (a pitched grain cloud) → **Stutter** (tempo-synced) → **Delay** (ping-pong, tempo-synced) → **Reverb**.
   - Each effect has an on switch and a lock. **SPARK** and **Breed** also vary the effects that are on and unlocked.
   - **SPARK FX** rolls only the effects. **Chain** loads a ready-made rack. **ALL OFF** clears everything except the reverb.
