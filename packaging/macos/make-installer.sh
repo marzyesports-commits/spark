@@ -46,7 +46,9 @@ make_component() {
     pkgbuild --analyze --root "$root" "$STAGE/$id.plist" >/dev/null
     local i=0
     while /usr/libexec/PlistBuddy -c "Print :$i:RootRelativeBundlePath" "$STAGE/$id.plist" >/dev/null 2>&1; do
-        /usr/libexec/PlistBuddy -c "Set :$i:BundleIsRelocatable false" "$STAGE/$id.plist"
+        /usr/libexec/PlistBuddy -c "Delete :$i:BundleIsRelocatable" "$STAGE/$id.plist" >/dev/null 2>&1 || true
+        /usr/libexec/PlistBuddy -c "Add :$i:BundleIsRelocatable bool false" "$STAGE/$id.plist" \
+            || echo "::warning::Couldn't mark bundle $i in $id as non-relocatable"
         i=$((i + 1))
     done
     pkgbuild --root "$root" --component-plist "$STAGE/$id.plist" \
