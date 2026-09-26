@@ -143,6 +143,7 @@ public:
 protected:
     virtual void writeExtraState (juce::ValueTree&) {}
     virtual void readExtraState (const juce::ValueTree&) {}
+    virtual void migrateParameters (juce::ValueTree&) {}   // rename/convert parameters from older versions before loading
     void setParam (const juce::String& id, float normalised);
 
 private:

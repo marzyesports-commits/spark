@@ -66,9 +66,6 @@ class LayersCard : public SynthCard
 {
 public:
     explicit LayersCard (InstrumentProcessor&);
-
-private:
-    ChoiceSegments octave;
 };
 
 class PlayCard : public SynthCard

@@ -461,6 +461,7 @@ void SparkProcessorBase::setStateInformation (const void* data, int size)
     auto paramsOnly = state.createCopy();
     paramsOnly.removeChild (paramsOnly.getChildWithName ("LINEAGE"), nullptr);
     paramsOnly.removeChild (paramsOnly.getChildWithName ("EXTRA"), nullptr);
+    migrateParameters (paramsOnly);
     apvts.replaceState (paramsOnly);
 
     sendChangeMessage(); // async and thread-safe

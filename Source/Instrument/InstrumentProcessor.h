@@ -90,6 +90,11 @@ public:
     float getFacetModulation (int facet) const override;
     juce::ReferenceCountedObjectPtr<juce::ReferenceCountedObject> getUndoObject() const override { return getSource().get(); }
     void restoreUndoObject (juce::ReferenceCountedObjectPtr<juce::ReferenceCountedObject>) override;
+
+protected:
+    void migrateParameters (juce::ValueTree&) override;
+
+public:
     bool isModuleLocked (const juce::String& moduleId) const;
     void setModuleLocked (const juce::String& moduleId, bool);
     void sparkEffects();            // roll only the enabled, unlocked effects
@@ -135,7 +140,7 @@ public:
         std::atomic<float>* resonance = nullptr;    // 0..1
         std::atomic<float>* keyTrack = nullptr;     // 0..1
         std::atomic<float>* subLevel = nullptr;
-        std::atomic<float>* subOctave = nullptr;    // 0 = -1 octave, 1 = -2
+        std::atomic<float>* subTune = nullptr;      // semitones, -36..0
         std::atomic<float>* noiseLevel = nullptr;
         std::atomic<float>* noiseColour = nullptr;  // 0 dark .. 1 bright
     } params;

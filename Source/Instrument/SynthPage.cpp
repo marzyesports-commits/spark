@@ -175,13 +175,10 @@ FilterCard::FilterCard (InstrumentProcessor& p, ModDropHandler onDrop)
 
 // =====================================================================================
 LayersCard::LayersCard (InstrumentProcessor& p)
-    : SynthCard ("LAYERS", {}),
-      octave (*p.apvts.getParameter ("subOctave"), { "SUB -1 OCT", "SUB -2 OCT" },
-              { "The sub plays one octave below each note", "The sub plays two octaves below each note" })
+    : SynthCard ("LAYERS", "Sub and noise, under every note")
 {
-    segments = &octave;
-    addAndMakeVisible (octave);
     addKnob (*p.apvts.getParameter ("subLevel"), "SUB", "A clean sine under every note, for weight. Goes through the filter and envelope with the rest");
+    addKnob (*p.apvts.getParameter ("subTune"), "PITCH", "How far below the note the sub plays: any interval down to 3 octaves (-12 st = one octave)");
     addKnob (*p.apvts.getParameter ("noiseLevel"), "NOISE", "Noise layer for breath, air and grit. Goes through the filter and envelope with the rest");
     addKnob (*p.apvts.getParameter ("noiseColour"), "COLOUR", "Noise colour: dark rumble to bright hiss");
 }

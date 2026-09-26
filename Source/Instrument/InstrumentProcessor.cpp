@@ -70,7 +70,14 @@ namespace
         layout.add (std::make_unique<juce::AudioParameterFloat> (juce::ParameterID { "keyTrack", 1 }, "Filter Key Tracking", unit, 0.0f, pctAttr));
         // ---- Layers: a sine sub oscillator and a noise layer, mixed in before the filter
         layout.add (std::make_unique<juce::AudioParameterFloat> (juce::ParameterID { "subLevel", 1 }, "Sub Level", unit, 0.0f, pctAttr));
-        layout.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "subOctave", 1 }, "Sub Octave", juce::StringArray { "-1 oct", "-2 oct" }, 0));
+        // Sub pitch in semitones below the note: any interval down to 3 octaves
+        layout.add (std::make_unique<juce::AudioParameterInt> (juce::ParameterID { "subTune", 1 }, "Sub Pitch", -36, 0, -12,
+            juce::AudioParameterIntAttributes().withStringFromValueFunction ([] (int v, int)
+            {
+                if (v == 0) return juce::String ("Unison");
+                if (v % 12 == 0) return juce::String (v / 12) + " oct";
+                return juce::String (v) + " st";
+            })));
         layout.add (std::make_unique<juce::AudioParameterFloat> (juce::ParameterID { "noiseLevel", 1 }, "Noise Level", unit, 0.0f, pctAttr));
         layout.add (std::make_unique<juce::AudioParameterFloat> (juce::ParameterID { "noiseColour", 1 }, "Noise Colour", unit, 0.6f,
             juce::AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int)
@@ -141,7 +148,7 @@ InstrumentProcessor::InstrumentProcessor()
     params.resonance = apvts.getRawParameterValue ("resonance");
     params.keyTrack = apvts.getRawParameterValue ("keyTrack");
     params.subLevel = apvts.getRawParameterValue ("subLevel");
-    params.subOctave = apvts.getRawParameterValue ("subOctave");
+    params.subTune = apvts.getRawParameterValue ("subTune");
     params.noiseLevel = apvts.getRawParameterValue ("noiseLevel");
     params.noiseColour = apvts.getRawParameterValue ("noiseColour");
     rack.attach (apvts);
@@ -745,6 +752,23 @@ std::vector<juce::RangedAudioParameter*> InstrumentProcessor::getRandomisableExt
         if (macroUsed[m])
             out.push_back (apvts.getParameter (mod::macroParam (m)));
     return out;
+}
+
+void InstrumentProcessor::migrateParameters (juce::ValueTree& state)
+{
+    // 1.4.0 had a two-way Sub Octave switch; it became Sub Pitch in semitones
+    auto old = state.getChildWithProperty ("id", "subOctave");
+    if (old.isValid())
+    {
+        if (! state.getChildWithProperty ("id", "subTune").isValid())
+        {
+            juce::ValueTree tune ("PARAM");
+            tune.setProperty ("id", "subTune", nullptr);
+            tune.setProperty ("value", (float) old.getProperty ("value") > 0.5f ? -24.0f : -12.0f, nullptr);
+            state.appendChild (tune, nullptr);
+        }
+        state.removeChild (old, nullptr);
+    }
 }
 
 void InstrumentProcessor::restoreUndoObject (juce::ReferenceCountedObjectPtr<juce::ReferenceCountedObject> o)

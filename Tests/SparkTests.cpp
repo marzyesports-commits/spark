@@ -975,11 +975,31 @@ int main (int argc, char** argv)
         auto withSub = make();
         withSub->apvts.getParameter ("subLevel")->setValueNotifyingHost (0.8f);
         const auto sub1 = note (*withSub);
-        setReal (*withSub, "subOctave", 1.0f);
+        setReal (*withSub, "subTune", -24.0f);
         const auto sub2 = note (*withSub);
         check (toneAt (sub1, sr, 110.0) > toneAt (dry, sr, 110.0) * 20.0f + 1.0e-4f, "Sub -1 octave adds 110 Hz under A3 (220 Hz)");
         check (toneAt (sub2, sr, 55.0) > toneAt (dry, sr, 55.0) * 20.0f + 1.0e-4f && toneAt (sub2, sr, 110.0) < toneAt (sub1, sr, 110.0) * 0.2f,
                "Sub -2 octaves moves it to 55 Hz");
+        setReal (*withSub, "subTune", -19.0f);   // an octave and a fifth down: 220 * 2^(-19/12) = 73.4 Hz
+        const auto sub3 = note (*withSub);
+        check (toneAt (sub3, sr, 73.42) > toneAt (dry, sr, 73.42) * 20.0f + 1.0e-4f, "Sub pitch can be any interval (-19 st = 73 Hz)");
+        {
+            // a 1.4.0 project with the old "-2 oct" switch loads as -24 semitones
+            InstrumentProcessor q;
+            juce::MemoryBlock st;
+            q.getStateInformation (st);
+            auto xml = juce::AudioProcessor::getXmlFromBinary (st.getData(), (int) st.getSize());
+            auto tree = juce::ValueTree::fromXml (*xml);
+            tree.removeChild (tree.getChildWithProperty ("id", "subTune"), nullptr);
+            juce::ValueTree old ("PARAM");
+            old.setProperty ("id", "subOctave", nullptr);
+            old.setProperty ("value", 1.0f, nullptr);
+            tree.appendChild (old, nullptr);
+            juce::MemoryBlock migrated;
+            juce::AudioProcessor::copyXmlToBinary (*tree.createXml(), migrated);
+            q.setStateInformation (migrated.getData(), (int) migrated.getSize());
+            check (juce::roundToInt (q.params.subTune->load()) == -24, "1.4.0 projects with Sub -2 oct load as -24 st");
+        }
 
         auto noisy = make();
         noisy->apvts.getParameter ("noiseLevel")->setValueNotifyingHost (0.8f);

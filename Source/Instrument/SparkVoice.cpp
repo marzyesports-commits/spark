@@ -221,7 +221,7 @@ void SparkVoice::addLayers (float* l, float* r, int n, double baseHz)
     const float sub = p.subLevel->load(), noise = p.noiseLevel->load();
     if (sub > 1.0e-4f)
     {
-        const double inc = baseHz / (p.subOctave->load() > 0.5f ? 4.0 : 2.0) / getSampleRate();
+        const double inc = baseHz * std::exp2 ((double) p.subTune->load() / 12.0) / getSampleRate();
         const float g = sub * 0.55f;
         for (int i = 0; i < n; ++i)
         {
