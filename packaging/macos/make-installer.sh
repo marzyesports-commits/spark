@@ -6,6 +6,7 @@
 #   INSTALLER_SIGN_IDENTITY  e.g. "Developer ID Installer: Your Name (TEAMID)"
 #   NOTARY_APPLE_ID, NOTARY_TEAM_ID, NOTARY_PASSWORD (app-specific password)
 set -euo pipefail
+trap 'echo "::error file=packaging/macos/make-installer.sh,line=$LINENO::failed: $BASH_COMMAND"' ERR
 
 VERSION="${1:-1.0.0}"
 BUILD_DIR="${BUILD_DIR:-build}"
@@ -85,5 +86,6 @@ ditto "$STAGE/root-apps/Applications" "$ZIPROOT/Apps"
 (cd "$STAGE" && ditto -c -k --keepParent "Spark-$VERSION-macOS" "Spark-$VERSION-macOS-plugins.zip")
 mv "$STAGE/Spark-$VERSION-macOS-plugins.zip" "$OUT_DIR/"
 
-pkgutil --payload-files "$PKG" | head -40
+pkgutil --payload-files "$PKG" > "$STAGE/payload.txt" 2>&1 || true
+grep -E "\.(vst3|component|app)$" "$STAGE/payload.txt" || true
 ls -la "$OUT_DIR"
