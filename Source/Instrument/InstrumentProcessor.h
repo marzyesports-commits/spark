@@ -88,6 +88,8 @@ public:
     // ---- effects rack
     std::vector<juce::RangedAudioParameter*> getRandomisableExtras() const override;
     float getFacetModulation (int facet) const override;
+    juce::ReferenceCountedObjectPtr<juce::ReferenceCountedObject> getUndoObject() const override { return getSource().get(); }
+    void restoreUndoObject (juce::ReferenceCountedObjectPtr<juce::ReferenceCountedObject>) override;
     bool isModuleLocked (const juce::String& moduleId) const;
     void setModuleLocked (const juce::String& moduleId, bool);
     void sparkEffects();            // roll only the enabled, unlocked effects

@@ -747,6 +747,12 @@ std::vector<juce::RangedAudioParameter*> InstrumentProcessor::getRandomisableExt
     return out;
 }
 
+void InstrumentProcessor::restoreUndoObject (juce::ReferenceCountedObjectPtr<juce::ReferenceCountedObject> o)
+{
+    if (auto* s = dynamic_cast<SourceData*> (o.get()); s != nullptr && s != getSource().get())
+        installSource (SourceData::Ptr (s));
+}
+
 float InstrumentProcessor::getFacetModulation (int facet) const
 {
     return facet >= 0 && facet < numFacetsInstrument ? liveMod[(size_t) facet].load() : 0.0f;

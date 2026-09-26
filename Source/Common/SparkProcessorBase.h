@@ -2,6 +2,7 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "Lineage.h"
+#include "UndoHistory.h"
 #include <map>
 
 namespace spark
@@ -122,6 +123,12 @@ public:
 
     const juce::String& getKind() const noexcept { return kind; }
 
+    // ---- undo / redo (message thread)
+    UndoHistory& getUndo() { return *undoHistory; }
+    // Non-parameter state that undo should also restore (the instrument's loaded sound)
+    virtual juce::ReferenceCountedObjectPtr<juce::ReferenceCountedObject> getUndoObject() const { return nullptr; }
+    virtual void restoreUndoObject (juce::ReferenceCountedObjectPtr<juce::ReferenceCountedObject>) {}
+
     // ---- AudioProcessor
     bool hasEditor() const override { return true; }
     double getTailLengthSeconds() const override { return 4.0; }
@@ -151,6 +158,7 @@ private:
     int presetIndex = 0;
     juce::String kind;
     juce::Random random;
+    std::unique_ptr<UndoHistory> undoHistory;   // last member: goes before the parameters it listens to
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SparkProcessorBase)
 };

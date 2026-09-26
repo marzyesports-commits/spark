@@ -45,6 +45,7 @@ set(SPARK_COMMON_SOURCES
     Source/Common/SparkProcessorBase.cpp
     Source/Common/Components.cpp
     Source/Common/Wavetable.cpp
+    Source/Common/UndoHistory.cpp
     Source/Instrument/InstrumentPresets.cpp
     Source/Instrument/FxRack.cpp
     Source/Instrument/Modulation.cpp

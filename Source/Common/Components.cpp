@@ -65,6 +65,12 @@ juce::Path makeIcon (Icon icon, juce::Rectangle<float> a)
             p.cubicTo (sx (21.7f), sy (9), sx (21.7f), sy (19), sx (15), sy (19));
             p.lineTo (sx (12), sy (19));
             break;
+        case Icon::redo:
+            p.startNewSubPath (sx (15), sy (14)); p.lineTo (sx (20), sy (9)); p.lineTo (sx (15), sy (4));
+            p.startNewSubPath (sx (20), sy (9)); p.lineTo (sx (9), sy (9));
+            p.cubicTo (sx (2.3f), sy (9), sx (2.3f), sy (19), sx (9), sy (19));
+            p.lineTo (sx (12), sy (19));
+            break;
         case Icon::star:
             p = makeFivePointStar (a.reduced (a.getWidth() * 0.08f));
             break;
@@ -180,6 +186,14 @@ Header::Header (SparkProcessorBase& p, bool isFx) : processor (p), fx (isFx)
     synthTab.onClick = [this] { setPage (1); if (onPage) onPage (1); };
     fxTab.onClick = [this] { setPage (2); if (onPage) onPage (2); };
     setPage (0);
+    for (auto* b : { &undoButton, &redoButton })
+        addAndMakeVisible (b);
+    undoButton.setTitle ("Undo");
+    redoButton.setTitle ("Redo");
+    undoButton.onClick = [this] { processor.getUndo().undo(); refreshUndo(); };
+    redoButton.onClick = [this] { processor.getUndo().redo(); refreshUndo(); };
+    undoRefresh.startTimerHz (4);
+    refreshUndo();
     prev.onClick = [this] { processor.loadPreset (processor.getPresetIndex() - 1); };
     next.onClick = [this] { processor.loadPreset (processor.getPresetIndex() + 1); };
     settings.onClick = [this] { if (onSettings) onSettings (settings); };
@@ -195,6 +209,8 @@ void Header::resized()
     prev.setBounds (presetArea.getX() + 4, presetArea.getY() + 4, 36, 36);
     next.setBounds (presetArea.getRight() - 40, presetArea.getY() + 4, 36, 36);
     settings.setBounds (b.getRight() - 44, b.getCentreY() - 22, 44, 44);
+    redoButton.setBounds (presetArea.getX() - 12 - 40, b.getCentreY() - 20, 40, 40);
+    undoButton.setBounds (redoButton.getX() - 8 - 40, b.getCentreY() - 20, 40, 40);
     kindArea = juce::Rectangle<int> (222, 40).withCentre ({ 0, b.getCentreY() });
     kindArea.setX (settings.getX() - 12 - kindArea.getWidth());
     soundTab.setBounds (kindArea.getX() + 3, kindArea.getY() + 3, 80, 34);
@@ -257,6 +273,18 @@ void Header::paint (juce::Graphics& g)
     g.fillRoundedRectangle (tag, 20.0f);
     g.setColour (line);
     g.drawRoundedRectangle (tag.reduced (0.5f), 20.0f, 1.0f);
+}
+
+void Header::refreshUndo()
+{
+    auto& u = processor.getUndo();
+    const bool can = u.canUndo(), canR = u.canRedo();
+    undoButton.setEnabled (can);
+    redoButton.setEnabled (canR);
+    undoButton.setAlpha (can ? 1.0f : 0.45f);
+    redoButton.setAlpha (canR ? 1.0f : 0.45f);
+    undoButton.setTooltip (can ? "Undo " + u.getUndoDescription() + " (Cmd/Ctrl+Z)" : "Nothing to undo");
+    redoButton.setTooltip (canR ? "Redo " + u.getRedoDescription() + " (Shift+Cmd+Z / Ctrl+Y)" : "Nothing to redo");
 }
 
 void Header::itemDragMove (const SourceDetails& d)
@@ -1771,6 +1799,23 @@ SparkEditorBase::SparkEditorBase (SparkProcessorBase& p, bool isFx)
     if (auto* c = getConstrainer())
         c->setFixedAspectRatio ((double) designWidth / (double) designHeight);
     setSize (designWidth, designHeight);
+}
+
+bool SparkEditorBase::keyPressed (const juce::KeyPress& key)
+{
+    const auto mods = key.getModifiers();
+    const int code = juce::CharacterFunctions::toLowerCase ((juce::juce_wchar) key.getKeyCode());
+    if (mods.isCommandDown() && code == 'z')
+    {
+        if (mods.isShiftDown()) sparkProcessor.getUndo().redo(); else sparkProcessor.getUndo().undo();
+        return true;
+    }
+    if (mods.isCommandDown() && code == 'y')
+    {
+        sparkProcessor.getUndo().redo();
+        return true;
+    }
+    return false;
 }
 
 SparkEditorBase::~SparkEditorBase()

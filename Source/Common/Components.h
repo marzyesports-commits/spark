@@ -7,7 +7,7 @@
 
 namespace spark
 {
-enum class Icon { none, chevronLeft, chevronRight, chevronDown, settings, undo, star, lock, unlock, upload, snowflake, cross, shuffle, search, expand };
+enum class Icon { none, chevronLeft, chevronRight, chevronDown, settings, undo, redo, star, lock, unlock, upload, snowflake, cross, shuffle, search, expand };
 juce::Path makeIcon (Icon, juce::Rectangle<float> area);
 
 // Rounded pill button in Spark's styles.
@@ -74,6 +74,10 @@ private:
     PillButton prev { {}, PillButton::Style::ghost, Icon::chevronLeft };
     PillButton next { {}, PillButton::Style::ghost, Icon::chevronRight };
     PillButton settings { {}, PillButton::Style::outline, Icon::settings };
+    PillButton undoButton { {}, PillButton::Style::outline, Icon::undo };
+    PillButton redoButton { {}, PillButton::Style::outline, Icon::redo };
+    juce::TimedCallback undoRefresh { [this] { refreshUndo(); } };
+    void refreshUndo();
     PillButton soundTab { "SOUND", PillButton::Style::segment };
     PillButton synthTab { "SYNTH", PillButton::Style::segment };
     PillButton fxTab { "FX", PillButton::Style::segment };
@@ -370,6 +374,7 @@ class SparkEditorBase : public juce::AudioProcessorEditor,
                         public juce::DragAndDropContainer
 {
 public:
+    bool keyPressed (const juce::KeyPress&) override;   // Cmd/Ctrl+Z undo, Shift+Cmd+Z / Ctrl+Y redo
     SparkEditorBase (SparkProcessorBase&, bool isFx);
     ~SparkEditorBase() override;
 

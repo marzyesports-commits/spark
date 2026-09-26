@@ -102,6 +102,8 @@ SparkProcessorBase::SparkProcessorBase (const BusesProperties& buses, std::vecto
         loadPreset (0);
     else
         lineage.push (currentFacetValues(), (juce::uint32) random.nextInt());
+
+    undoHistory = std::make_unique<UndoHistory> (*this);
 }
 
 FacetValues SparkProcessorBase::currentFacetValues() const
@@ -462,5 +464,7 @@ void SparkProcessorBase::setStateInformation (const void* data, int size)
     apvts.replaceState (paramsOnly);
 
     sendChangeMessage(); // async and thread-safe
+    if (undoHistory != nullptr)
+        undoHistory->requestReset();   // a loaded project starts a fresh history (hosts may call this off the message thread)
 }
 } // namespace spark

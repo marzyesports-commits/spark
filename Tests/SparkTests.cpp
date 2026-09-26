@@ -1173,6 +1173,91 @@ int main (int argc, char** argv)
         }
     }
 
+    // ---------------------------------------------------------------- undo / redo
+    std::cout << "Undo and redo" << std::endl;
+    {
+        InstrumentProcessor p;
+        p.prepareToPlay (sr, 512);
+        auto& u = p.getUndo();
+        u.reset();
+        check (! u.canUndo() && ! u.canRedo(), "A fresh history has nothing to undo");
+        auto& tone = p.facetParam (InstrumentProcessor::tone);
+        auto& driveP = p.facetParam (InstrumentProcessor::drive);
+        const float tone0 = tone.getValue(), drive0 = driveP.getValue();
+
+        // a drag: many small moves inside one gesture = one step
+        tone.beginChangeGesture();
+        for (int i = 1; i <= 20; ++i) tone.setValueNotifyingHost (tone0 + 0.01f * (float) i);
+        tone.endChangeGesture();
+        u.commitNow();
+        driveP.setValueNotifyingHost (0.9f);
+        u.commitNow();
+        check (u.canUndo() && u.getUndoDescription().containsIgnoreCase ("drive"), "Undo names the last edit (" + u.getUndoDescription() + ")");
+        u.undo();
+        check (std::abs (driveP.getValue() - drive0) < 1e-5f && std::abs (tone.getValue() - (tone0 + 0.2f)) < 1e-4f, "Undo reverts the last edit only");
+        u.undo();
+        check (std::abs (tone.getValue() - tone0) < 1e-5f, "A whole drag undoes in one step");
+        check (u.canRedo(), "Redo is available after undo");
+        u.redo();
+        check (std::abs (tone.getValue() - (tone0 + 0.2f)) < 1e-4f, "Redo reapplies it");
+        p.apvts.getParameter ("resonance")->setValueNotifyingHost (0.7f);
+        u.commitNow();
+        check (! u.canRedo(), "A new edit clears the redo steps");
+
+        // Spark and a preset change are one step each, across pages (facets + filter + effects)
+        const auto before = p.currentFacetValues();
+        p.spark();
+        u.commitNow();
+        u.undo();
+        bool back = true;
+        const auto after = p.currentFacetValues();
+        for (int i = 0; i < numFacets; ++i) back = back && std::abs (after[(size_t) i] - before[(size_t) i]) < 1e-4f;
+        check (back, "Undo takes back a whole Spark");
+        p.loadPreset (5);
+        u.commitNow();
+        u.undo();
+        check (std::abs (p.apvts.getParameter ("resonance")->getValue() - 0.7f) < 1e-4f, "Undo takes back a preset change, including settings on other pages");
+
+        // the loaded sound
+        auto before2 = p.getSource();
+        juce::AudioBuffer<float> sine (1, (int) sr);
+        for (int i = 0; i < sine.getNumSamples(); ++i) sine.setSample (0, i, 0.5f * std::sin (6.2831853f * 330.0f * (float) i / (float) sr));
+        auto f = outDir.getChildFile ("undo-test.wav");
+        writeWav (f, sine, sr);
+        juce::String err;
+        p.loadFile (f, err);
+        u.commitNow();
+        check (u.getUndoDescription() == "New sound", "Loading a sound is an undo step");
+        u.undo();
+        check (p.getSource() == before2, "Undo brings the previous sound back");
+        u.redo();
+        check (p.getSource() != before2 && p.getSource()->name.contains ("undo-test"), "Redo loads it again");
+
+        // modulation routings undo too
+        u.commitNow();
+        p.assignModulation (mod::lfo1, mod::morph, 0.4f);
+        u.commitNow();
+        u.undo();
+        check (juce::roundToInt (p.modParams.src[0]->load()) == mod::none, "Undo removes a modulation routing");
+
+        // on its own (no commitNow): a knob turn is recorded once it settles
+        {
+            u.commitNow();
+            p.facetParam (InstrumentProcessor::space).setValueNotifyingHost (0.05f);
+            for (int i = 0; i < 4; ++i) juce::MessageManager::getInstance()->runDispatchLoopUntil (200);
+            p.facetParam (InstrumentProcessor::space).setValueNotifyingHost (0.95f);
+            for (int i = 0; i < 4; ++i) juce::MessageManager::getInstance()->runDispatchLoopUntil (200);
+            u.undo();
+            check (std::abs (p.facetParam (InstrumentProcessor::space).getValue() - 0.05f) < 1e-4f, "Edits are recorded automatically once they settle");
+        }
+        // loading a project starts afresh
+        juce::MemoryBlock st;
+        p.getStateInformation (st);
+        p.setStateInformation (st.getData(), (int) st.getSize());
+        for (int i = 0; i < 3; ++i) juce::MessageManager::getInstance()->runDispatchLoopUntil (250);
+        check (! u.canUndo() && ! u.canRedo(), "Loading a project starts a fresh history");
+    }
+
     // ---------------------------------------------------------------- user presets
     std::cout << "User presets: save, reload, delete" << std::endl;
     {
