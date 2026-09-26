@@ -35,6 +35,12 @@ juce::Path makeIcon (Icon icon, juce::Rectangle<float> a)
             p.addEllipse (sx (4), sy (4), sx (16) - sx (4), sy (16) - sy (4));
             p.startNewSubPath (sx (14.5f), sy (14.5f)); p.lineTo (sx (20), sy (20));
             break;
+        case Icon::expand:
+            p.startNewSubPath (sx (14), sy (4)); p.lineTo (sx (20), sy (4)); p.lineTo (sx (20), sy (10));
+            p.startNewSubPath (sx (20), sy (4)); p.lineTo (sx (13), sy (11));
+            p.startNewSubPath (sx (10), sy (20)); p.lineTo (sx (4), sy (20)); p.lineTo (sx (4), sy (14));
+            p.startNewSubPath (sx (4), sy (20)); p.lineTo (sx (11), sy (13));
+            break;
         case Icon::settings:
             p.startNewSubPath (sx (4), sy (7)); p.lineTo (sx (14), sy (7));
             p.startNewSubPath (sx (18), sy (7)); p.lineTo (sx (20), sy (7));
@@ -533,6 +539,72 @@ void AmountSlider::mouseUp (const juce::MouseEvent&) { attachment.endGesture(); 
 void AmountSlider::mouseDoubleClick (const juce::MouseEvent&)
 {
     attachment.setValueAsCompleteGesture (param.convertFrom0to1 (param.getDefaultValue()));
+}
+
+// =====================================================================================
+ValueBox::ValueBox (juce::RangedAudioParameter& p, const juce::String& l, const juce::String& tip)
+    : param (p),
+      attachment (p, [this] (float) { repaint(); }),
+      label (l)
+{
+    setTooltip (tip.isNotEmpty() ? tip + ". Drag up or down, Shift for fine, double-click to reset." : juce::String());
+    setTitle (l);
+    setMouseCursor (juce::MouseCursor::UpDownResizeCursor);
+}
+
+void ValueBox::paint (juce::Graphics& g)
+{
+    using namespace colours;
+    auto b = getLocalBounds().toFloat();
+    if (framed || hover || dragging)
+    {
+        g.setColour (dragging ? selected : (hover ? raised : panel));
+        g.fillRoundedRectangle (b.reduced (0.5f), 8.0f);
+        g.setColour (dragging ? gold : (hover ? line2 : line));
+        g.drawRoundedRectangle (b.reduced (0.5f), 8.0f, 1.0f);
+    }
+    auto top = b.withHeight (b.getHeight() * 0.45f);
+    auto bottom = b.withTrimmedTop (b.getHeight() * 0.42f);
+    g.setColour (dragging || hover ? gold : muted);
+    g.setFont (fonts::body (10.0f, true).withExtraKerningFactor (0.12f));
+    g.drawText (label, top.translated (0.0f, 2.0f), juce::Justification::centred, false);
+    g.setColour (text);
+    g.setFont (fonts::mono (11.0f));
+    g.drawText (param.getCurrentValueAsText(), bottom.translated (0.0f, -1.0f), juce::Justification::centred, false);
+}
+
+void ValueBox::mouseDown (const juce::MouseEvent&)
+{
+    dragStart = param.getValue();
+    dragging = true;
+    attachment.beginGesture();
+    repaint();
+}
+
+void ValueBox::mouseDrag (const juce::MouseEvent& e)
+{
+    const float sensitivity = e.mods.isShiftDown() ? 0.0008f : 0.005f;
+    const float v = juce::jlimit (0.0f, 1.0f, dragStart - (float) e.getDistanceFromDragStartY() * sensitivity);
+    attachment.setValueAsPartOfGesture (param.convertFrom0to1 (v));
+}
+
+void ValueBox::mouseUp (const juce::MouseEvent&)
+{
+    attachment.endGesture();
+    dragging = false;
+    repaint();
+}
+
+void ValueBox::mouseDoubleClick (const juce::MouseEvent&)
+{
+    attachment.setValueAsCompleteGesture (param.convertFrom0to1 (param.getDefaultValue()));
+}
+
+void ValueBox::mouseWheelMove (const juce::MouseEvent& e, const juce::MouseWheelDetails& w)
+{
+    const float step = e.mods.isShiftDown() ? 0.005f : 0.03f;
+    const float v = juce::jlimit (0.0f, 1.0f, param.getValue() + (w.deltaY > 0 ? step : -step));
+    attachment.setValueAsCompleteGesture (param.convertFrom0to1 (v));
 }
 
 // =====================================================================================
@@ -1258,6 +1330,8 @@ void SparkEditorBase::showSettingsMenu (juce::Component& anchor)
 
 void SparkEditorBase::setBrowserVisible (bool shouldShow)
 {
+    if (shouldShow)
+        hideOtherOverlays();
     browser.setVisible (shouldShow);
     if (shouldShow)
         browser.toFront (true);

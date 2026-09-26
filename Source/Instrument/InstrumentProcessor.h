@@ -4,6 +4,7 @@
 #include <juce_dsp/juce_dsp.h>
 #include "Common/SparkProcessorBase.h"
 #include "Common/Wavetable.h"
+#include "Common/Envelope.h"
 
 namespace spark
 {
@@ -45,14 +46,34 @@ public:
     void getCoreShape (std::vector<float>& out, int n) override;
 
     // raw parameter access for voices (audio thread)
+    struct EnvParams
+    {
+        std::atomic<float> *attack = nullptr, *hold = nullptr, *decay = nullptr, *sustain = nullptr, *release = nullptr;
+        std::atomic<float> *attackCurve = nullptr, *decayCurve = nullptr, *releaseCurve = nullptr;
+
+        Envelope::Settings settings() const
+        {
+            Envelope::Settings s;
+            s.attack = fmt::envSeconds (attack->load());
+            s.hold = hold->load() > 0.0f ? fmt::envSeconds (hold->load()) : 0.0f;
+            s.decay = fmt::envSeconds (decay->load());
+            s.sustain = sustain->load();
+            s.release = fmt::envSeconds (release->load());
+            s.attackCurve = attackCurve->load();
+            s.decayCurve = decayCurve->load();
+            s.releaseCurve = releaseCurve->load();
+            return s;
+        }
+    };
+
     struct Params
     {
         std::atomic<float>* facet[numFacets] {};
         std::atomic<float>* mode = nullptr;
-        std::atomic<float>* attack = nullptr;
-        std::atomic<float>* decay = nullptr;
-        std::atomic<float>* sustain = nullptr;
-        std::atomic<float>* release = nullptr;
+        EnvParams amp, toneEnv;
+        std::atomic<float>* ampVelocity = nullptr;
+        std::atomic<float>* toneAmount = nullptr;   // -1..1 = -5..+5 octaves
+        std::atomic<float>* toneVelocity = nullptr;
         std::atomic<float>* level = nullptr;
     } params;
 
@@ -85,9 +106,8 @@ private:
     mutable juce::SpinLock sourceLock;
     juce::ReferenceCountedArray<SourceData> retired; // freed on the message thread, never the audio thread
 
-    juce::dsp::StateVariableTPTFilter<float> filter;
     juce::dsp::Reverb reverb;
-    juce::SmoothedValue<float> cutoffSmooth, driveSmooth, levelSmooth;
+    juce::SmoothedValue<float> levelSmooth;
     double currentSampleRate = 44100.0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (InstrumentProcessor)

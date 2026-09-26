@@ -34,29 +34,92 @@ private:
     std::vector<float> frameShape;
 };
 
-// Left column, bottom: the amp envelope, drawn and draggable.
-class ShapePanel : public juce::Component,
-                   public juce::SettableTooltipClient,
-                   private juce::Timer
+// The parameters of one AHDSR envelope with curves.
+struct EnvelopeRefs
+{
+    juce::RangedAudioParameter *attack, *hold, *decay, *sustain, *release, *attackCurve, *decayCurve, *releaseCurve;
+    static EnvelopeRefs from (juce::AudioProcessorValueTreeState&, const juce::String& prefix);
+    std::vector<juce::RangedAudioParameter*> all() const { return { attack, hold, decay, sustain, release, attackCurve, decayCurve, releaseCurve }; }
+};
+
+// Draggable envelope drawing. Points set times and sustain; the small handles
+// in the middle of each slope bend its curve.
+class EnvelopeGraph : public juce::Component,
+                      public juce::SettableTooltipClient,
+                      private juce::Timer
 {
 public:
-    explicit ShapePanel (InstrumentProcessor&);
+    EnvelopeGraph (EnvelopeRefs, bool showHold);
+    std::function<bool()> isDimmed; // e.g. tone envelope with Amount at zero
+
     void paint (juce::Graphics&) override;
     void mouseMove (const juce::MouseEvent&) override;
+    void mouseExit (const juce::MouseEvent&) override;
     void mouseDown (const juce::MouseEvent&) override;
     void mouseDrag (const juce::MouseEvent&) override;
     void mouseUp (const juce::MouseEvent&) override;
+    void mouseDoubleClick (const juce::MouseEvent&) override;
 
 private:
-    void timerCallback() override { repaint(); }
-    struct Geometry { juce::Point<float> attack, decay, release; float left, right, top, bottom; };
+    enum Target { none = -1, attackPt, holdPt, decayPt, sustainPt, releasePt, attackHandle, decayHandle, releaseHandle };
+    struct Geometry
+    {
+        float x0, xA, xH, xD, xS, xR, top, bottom, segW, minW, zoom = 1.0f;
+        juce::Point<float> handle[3];
+        juce::Point<float> point[5];
+    };
     Geometry geometry() const;
-    int pointAt (juce::Point<float>) const;
+    juce::Path curvePath (const Geometry&) const;
+    Target targetAt (juce::Point<float>) const;
+    void timerCallback() override { repaint(); }
+    std::vector<juce::RangedAudioParameter*> paramsFor (Target) const;
+
+    EnvelopeRefs env;
+    bool showHold;
+    Target hovered = none, dragging = none;
+    std::map<juce::RangedAudioParameter*, float> dragStart;
+    float frozenZoom = 1.0f; // zoom is held still while dragging
+};
+
+// Left column, bottom: the envelopes in compact form, with a button to open the big editor.
+class ShapePanel : public juce::Component
+{
+public:
+    explicit ShapePanel (InstrumentProcessor&);
+    std::function<void()> onExpand;
+    void paint (juce::Graphics&) override;
+    void resized() override;
+
+private:
+    void showTone (bool);
 
     InstrumentProcessor& processor;
-    juce::RangedAudioParameter *attack, *decay, *sustain, *release;
-    int dragging = -1, hovered = -1;
-    juce::Rectangle<float> graph { 16.0f, 44.0f, 264.0f, 84.0f };
+    EnvelopeRefs ampRefs, toneRefs;
+    PillButton ampTab { "AMP", PillButton::Style::segment };
+    PillButton toneTab { "TONE", PillButton::Style::segment };
+    PillButton expand { {}, PillButton::Style::outline, Icon::expand };
+    EnvelopeGraph ampGraph, toneGraph;
+    juce::OwnedArray<ValueBox> ampBoxes, toneBoxes;
+    bool toneShown = false;
+};
+
+// Full-size envelope editor: both envelopes with every control.
+class ShapeEditor : public juce::Component
+{
+public:
+    explicit ShapeEditor (InstrumentProcessor&);
+    std::function<void()> onClose;
+    void paint (juce::Graphics&) override;
+    void resized() override;
+    bool keyPressed (const juce::KeyPress&) override;
+    void visibilityChanged() override { if (isVisible()) grabKeyboardFocus(); }
+
+private:
+    InstrumentProcessor& processor;
+    EnvelopeRefs ampRefs, toneRefs;
+    EnvelopeGraph ampGraph, toneGraph;
+    juce::OwnedArray<ValueBox> ampBoxes, toneBoxes;
+    PillButton close { {}, PillButton::Style::outline, Icon::cross };
 };
 
 class InstrumentEditor : public SparkEditorBase,
@@ -72,6 +135,7 @@ public:
 
 protected:
     void addExtraMenuItems (juce::PopupMenu&) override;
+    void hideOtherOverlays() override { shapeEditor.setVisible (false); }
 
 private:
     void loadFile (const juce::File&);
@@ -81,6 +145,7 @@ private:
     InstrumentProcessor& processor;
     SourcePanel source;
     ShapePanel shape;
+    ShapeEditor shapeEditor;
     std::unique_ptr<juce::FileChooser> chooser;
 };
 } // namespace spark

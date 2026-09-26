@@ -38,7 +38,7 @@ private:
         float gainL = 0.7f, gainR = 0.7f;
     };
 
-    void updateEnvelope();
+    void processChain (float* l, float* r, int n);
     void spawnGrain (const SourceData&, double ratio, float position, float grainSec, float motion, float scan);
     void renderGrains (float* left, float* right, int n, const SourceData&, double ratio,
                        float position, float grainSec, float motion, float scan);
@@ -46,14 +46,16 @@ private:
 
     InstrumentProcessor& processor;
     SourceData::Ptr source;
-    juce::ADSR adsr;
+    Envelope ampEnv, toneEnv;
+    juce::dsp::StateVariableTPTFilter<float> filter;
+    float driveAmount = 0.0f, baseCutoff = 1000.0f;
     juce::Random random;
 
     std::array<Grain, 40> grains;
     double samplesToNextGrain = 0.0;
     double phases[3] {};
     float lfoPhase = 0.0f;
-    float velocityGain = 1.0f;
+    float velocity = 1.0f;
     float bendSemitones = 0.0f;
     int note = 60;
 

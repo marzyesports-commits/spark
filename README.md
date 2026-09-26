@@ -38,6 +38,15 @@ Spark ships with **103 instrument presets** and **75 effect presets**, sorted in
   - **Make table** slices whatever sound is loaded.
   - **Export** writes a 2048-samples-per-frame WAV with the current **Drive** and **Tone** baked in. Serum and Vital load it as a wavetable. Exports go to `Documents/Spark/Wavetables`.
 - **About Serum presets (.fxp / .SerumPreset).** These files are settings for Serum's own engine, not audio, so Spark can't play them. To bring a Serum sound in, either load its wavetable WAV or bounce a note from Serum and drop the audio into Spark.
+- **Shape (envelopes).** Every note has two envelopes, each with Attack, Hold, Decay, Sustain and Release:
+  - **Amp** sets the volume of each note.
+  - **Tone** sweeps the Tone filter on each note. Set **Amount** to make it open (positive) or close (negative), for plucks, wows and acid squelches.
+
+  How to edit them:
+  - **Points.** Drag a point to set a time or level.
+  - **Curves.** Drag the small circle in the middle of a slope to bend its curve: *punchy* for snappy hits, *swell* for slow blooms.
+  - **Velocity.** This sets how much playing harder makes notes louder, or deepens the tone sweep.
+  - **Big editor.** Every number can be dragged (Shift for fine moves, double-click to reset). The ⤢ button opens a large editor with both envelopes side by side.
 - **Spark FX.**
   - **Freeze** stops listening and keeps playing grains from what's already captured.
   - **Capture to sample** saves the last four seconds of input to `Music/Spark/Captures` so you can drag it into the Spark instrument.

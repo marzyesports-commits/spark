@@ -26,6 +26,18 @@ namespace fmt
     juce::String grainMs (float v) { return juce::String (juce::roundToInt (grainSeconds (v) * 1000.0f)) + " ms"; }
     juce::String driveDb (float v) { return "+" + juce::String (v * 24.0f, 1) + " dB"; }
 
+    juce::String curve (float v)
+    {
+        if (std::abs (v) < 0.03f) return "Linear";
+        return (v > 0 ? "Punchy " : "Swell ") + juce::String (juce::roundToInt (std::abs (v) * 100.0f)) + "%";
+    }
+
+    juce::String octaves (float v)
+    {
+        if (std::abs (v) < 0.005f) return "Off";
+        return (v > 0 ? "+" : "") + juce::String (v * 5.0f, 1) + " oct";
+    }
+
     juce::String envTime (float v)
     {
         const float s = envSeconds (v);

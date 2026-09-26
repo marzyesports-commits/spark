@@ -28,10 +28,28 @@ namespace
         juce::NormalisableRange<float> unit (0.0f, 1.0f);
 
         layout.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "mode", 1 }, "Engine", juce::StringArray { "Grain", "Table" }, 0));
-        layout.add (std::make_unique<juce::AudioParameterFloat> (juce::ParameterID { "attack", 1 }, "Attack", unit, 0.08f, envAttr));
-        layout.add (std::make_unique<juce::AudioParameterFloat> (juce::ParameterID { "decay", 1 }, "Decay", unit, 0.4f, envAttr));
-        layout.add (std::make_unique<juce::AudioParameterFloat> (juce::ParameterID { "sustain", 1 }, "Sustain", unit, 0.7f, pctAttr));
-        layout.add (std::make_unique<juce::AudioParameterFloat> (juce::ParameterID { "release", 1 }, "Release", unit, 0.35f, envAttr));
+        juce::NormalisableRange<float> bipolar (-1.0f, 1.0f);
+        auto curveAttr = juce::AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return fmt::curve (v); });
+        auto octAttr = juce::AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return fmt::octaves (v); });
+        auto addEnv = [&] (const juce::String& prefix, const juce::String& name, float a, float d, float s, float r)
+        {
+            auto id = [&] (const juce::String& stage) { return prefix.isEmpty() ? stage.substring (0, 1).toLowerCase() + stage.substring (1) : prefix + stage; };
+            layout.add (std::make_unique<juce::AudioParameterFloat> (juce::ParameterID { id ("Attack"), 1 }, name + "Attack", unit, a, envAttr));
+            layout.add (std::make_unique<juce::AudioParameterFloat> (juce::ParameterID { id ("Hold"), 1 }, name + "Hold", unit, 0.0f,
+                juce::AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return v <= 0.0f ? juce::String ("0 ms") : fmt::envTime (v); })));
+            layout.add (std::make_unique<juce::AudioParameterFloat> (juce::ParameterID { id ("Decay"), 1 }, name + "Decay", unit, d, envAttr));
+            layout.add (std::make_unique<juce::AudioParameterFloat> (juce::ParameterID { id ("Sustain"), 1 }, name + "Sustain", unit, s, pctAttr));
+            layout.add (std::make_unique<juce::AudioParameterFloat> (juce::ParameterID { id ("Release"), 1 }, name + "Release", unit, r, envAttr));
+            layout.add (std::make_unique<juce::AudioParameterFloat> (juce::ParameterID { id ("AttackCurve"), 1 }, name + "Attack Curve", bipolar, 0.0f, curveAttr));
+            layout.add (std::make_unique<juce::AudioParameterFloat> (juce::ParameterID { id ("DecayCurve"), 1 }, name + "Decay Curve", bipolar, 0.0f, curveAttr));
+            layout.add (std::make_unique<juce::AudioParameterFloat> (juce::ParameterID { id ("ReleaseCurve"), 1 }, name + "Release Curve", bipolar, 0.0f, curveAttr));
+        };
+        // Amp envelope keeps its original ids (attack, decay, sustain, release) so old projects still load.
+        addEnv ({}, {}, 0.08f, 0.4f, 0.7f, 0.35f);
+        addEnv ("tone", "Tone ", 0.01f, 0.35f, 0.0f, 0.3f);
+        layout.add (std::make_unique<juce::AudioParameterFloat> (juce::ParameterID { "ampVelocity", 1 }, "Velocity to Amp", unit, 0.75f, pctAttr));
+        layout.add (std::make_unique<juce::AudioParameterFloat> (juce::ParameterID { "toneAmount", 1 }, "Tone Envelope Amount", bipolar, 0.0f, octAttr));
+        layout.add (std::make_unique<juce::AudioParameterFloat> (juce::ParameterID { "toneVelocity", 1 }, "Velocity to Tone Envelope", unit, 0.0f, pctAttr));
         layout.add (std::make_unique<juce::AudioParameterFloat> (juce::ParameterID { "level", 1 }, "Level",
                                                                  juce::NormalisableRange<float> (-24.0f, 6.0f, 0.1f), -3.0f,
                                                                  juce::AudioParameterFloatAttributes().withLabel ("dB")));
@@ -68,10 +86,23 @@ InstrumentProcessor::InstrumentProcessor()
     for (int i = 0; i < numFacets; ++i)
         params.facet[i] = apvts.getRawParameterValue (getFacets()[(size_t) i].id);
     params.mode = modeParam = apvts.getRawParameterValue ("mode");
-    params.attack = apvts.getRawParameterValue ("attack");
-    params.decay = apvts.getRawParameterValue ("decay");
-    params.sustain = apvts.getRawParameterValue ("sustain");
-    params.release = apvts.getRawParameterValue ("release");
+    auto wireEnv = [this] (EnvParams& e, const juce::String& prefix)
+    {
+        auto id = [&] (const juce::String& stage) { return prefix.isEmpty() ? stage.substring (0, 1).toLowerCase() + stage.substring (1) : prefix + stage; };
+        e.attack = apvts.getRawParameterValue (id ("Attack"));
+        e.hold = apvts.getRawParameterValue (id ("Hold"));
+        e.decay = apvts.getRawParameterValue (id ("Decay"));
+        e.sustain = apvts.getRawParameterValue (id ("Sustain"));
+        e.release = apvts.getRawParameterValue (id ("Release"));
+        e.attackCurve = apvts.getRawParameterValue (id ("AttackCurve"));
+        e.decayCurve = apvts.getRawParameterValue (id ("DecayCurve"));
+        e.releaseCurve = apvts.getRawParameterValue (id ("ReleaseCurve"));
+    };
+    wireEnv (params.amp, {});
+    wireEnv (params.toneEnv, "tone");
+    params.ampVelocity = apvts.getRawParameterValue ("ampVelocity");
+    params.toneAmount = apvts.getRawParameterValue ("toneAmount");
+    params.toneVelocity = apvts.getRawParameterValue ("toneVelocity");
     params.level = apvts.getRawParameterValue ("level");
 
     installSource (makeBuiltInSource());
@@ -292,16 +323,8 @@ void InstrumentProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     synth.setCurrentPlaybackSampleRate (sampleRate);
 
     juce::dsp::ProcessSpec spec { sampleRate, (juce::uint32) samplesPerBlock, 2 };
-    filter.prepare (spec);
-    filter.setType (juce::dsp::StateVariableTPTFilterType::lowpass);
-    filter.setResonance (0.85f);
     reverb.prepare (spec);
-
-    cutoffSmooth.reset (sampleRate, 0.03);
-    driveSmooth.reset (sampleRate, 0.03);
     levelSmooth.reset (sampleRate, 0.03);
-    cutoffSmooth.setCurrentAndTargetValue (fmt::cutoffHz (params.facet[tone]->load()));
-    driveSmooth.setCurrentAndTargetValue (params.facet[drive]->load());
     levelSmooth.setCurrentAndTargetValue (juce::Decibels::decibelsToGain (params.level->load()));
 }
 
@@ -319,33 +342,9 @@ void InstrumentProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
     synth.renderNextBlock (buffer, midi, 0, n);
 
     const int numCh = buffer.getNumChannels();
-    cutoffSmooth.setTargetValue (fmt::cutoffHz (params.facet[tone]->load()));
-    driveSmooth.setTargetValue (params.facet[drive]->load());
     levelSmooth.setTargetValue (juce::Decibels::decibelsToGain (params.level->load()));
 
-    // Drive: soft saturation that gets hotter and grittier as it rises
-    for (int i = 0; i < n; ++i)
-    {
-        const float d = driveSmooth.getNextValue();
-        const float g = 1.0f + d * 12.0f;
-        const float makeup = 1.0f / std::sqrt (g);
-        for (int ch = 0; ch < numCh; ++ch)
-        {
-            auto* x = buffer.getWritePointer (ch);
-            x[i] = std::tanh (g * x[i]) * makeup;
-        }
-    }
-
-    // Tone: low-pass, cutoff updated every 32 samples
-    for (int i = 0; i < n; i += 32)
-    {
-        const int len = juce::jmin (32, n - i);
-        filter.setCutoffFrequency (juce::jmin (cutoffSmooth.getNextValue(), (float) currentSampleRate * 0.45f));
-        cutoffSmooth.skip (len - 1);
-        auto block = juce::dsp::AudioBlock<float> (buffer).getSubBlock ((size_t) i, (size_t) len);
-        filter.process (juce::dsp::ProcessContextReplacing<float> (block));
-    }
-
+    // Drive and Tone now run per note inside each voice, so the tone envelope can sweep them.
     // Space
     const float spaceAmt = params.facet[space]->load();
     juce::dsp::Reverb::Parameters rp;

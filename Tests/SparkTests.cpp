@@ -6,6 +6,7 @@
 #include "Instrument/InstrumentEditor.h"
 #include "FX/FxProcessor.h"
 #include "FX/FxEditor.h"
+#include "Common/Envelope.h"
 
 using namespace spark;
 
@@ -163,6 +164,96 @@ int main (int argc, char** argv)
                 const auto s = stats (audio, 0, audio.getNumSamples());
                 check (s.finite && s.peak < 2.5f, "grain extremes size " + juce::String (g) + " pitch " + juce::String (pitchV) + ": peak " + juce::String (s.peak, 2));
             }
+    }
+
+    // ---------------------------------------------------------------- envelopes
+    std::cout << "Envelopes: tone sweep, hold, curves, velocity" << std::endl;
+    {
+        // curve maths
+        check (Envelope::shape (0.0f, 0.7f) == 0.0f && std::abs (Envelope::shape (1.0f, -0.7f) - 1.0f) < 1.0e-5f
+                   && Envelope::shape (0.5f, 0.8f) > 0.6f && Envelope::shape (0.5f, -0.8f) < 0.4f && Envelope::shape (0.5f, 0.0f) == 0.5f,
+               "Curves: positive is punchy, negative swells, zero is linear");
+
+        auto setN = [] (InstrumentProcessor& p, const juce::String& id, float realValue)
+        {
+            auto* prm = p.apvts.getParameter (id);
+            prm->setValueNotifyingHost (prm->convertTo0to1 (realValue));
+        };
+        auto hfEnergy = [] (const juce::AudioBuffer<float>& b, int start, int len)
+        {
+            double e = 0;
+            const float* d = b.getReadPointer (0);
+            for (int i = start + 1; i < start + len; ++i) e += (double) (d[i] - d[i - 1]) * (d[i] - d[i - 1]);
+            return e / len;
+        };
+
+        InstrumentProcessor p;
+        p.prepareToPlay (sr, 512);
+        p.loadPreset (2); // Init Table: deterministic, so brightness comparisons are fair
+        p.facetParam (InstrumentProcessor::motion).setValueNotifyingHost (0.0f);
+        p.facetParam (InstrumentProcessor::tone).setValueNotifyingHost (0.35f);   // dark
+        p.facetParam (InstrumentProcessor::space).setValueNotifyingHost (0.0f);
+        setN (p, "toneDecay", 0.35f);
+        setN (p, "toneSustain", 0.0f);
+
+        setN (p, "toneAmount", 0.0f);
+        auto flat = renderNotes (p, sr, { 60 }, 1.0, 0.3);
+        setN (p, "toneAmount", 0.8f);
+        auto swept = renderNotes (p, sr, { 60 }, 1.0, 0.3);
+        const double early = hfEnergy (swept, 0, (int) (0.1 * sr)) / hfEnergy (flat, 0, (int) (0.1 * sr));
+        const double late = hfEnergy (swept, (int) (0.8 * sr), (int) (0.15 * sr)) / hfEnergy (flat, (int) (0.8 * sr), (int) (0.15 * sr));
+        check (early > 3.0 && late < 2.0, "Tone envelope opens the filter at note start (" + juce::String (early, 1) + "x brighter), then closes (" + juce::String (late, 1) + "x)");
+        writeWav (outDir.getChildFile ("env-tone-sweep.wav"), swept, sr);
+        setN (p, "toneAmount", 0.0f);
+
+        // hold keeps a zero-sustain note sounding
+        setN (p, "attack", 0.0f); setN (p, "decay", 0.1f); setN (p, "sustain", 0.0f); setN (p, "hold", 0.0f);
+        auto noHold = renderNotes (p, sr, { 60 }, 1.0, 0.2);
+        setN (p, "hold", 0.5f); // ~1.25 s
+        auto withHold = renderNotes (p, sr, { 60 }, 1.0, 0.2);
+        const auto a = stats (noHold, (int) (0.5 * sr), (int) (0.1 * sr)), b = stats (withHold, (int) (0.5 * sr), (int) (0.1 * sr));
+        check (a.rms < 0.002f && b.rms > 0.02f, "Hold sustains the note at full level (" + juce::String (b.rms, 3) + " vs " + juce::String (a.rms, 4) + ")");
+        setN (p, "hold", 0.0f);
+
+        // decay curve: punchy is lower halfway through the decay than a slow swell
+        setN (p, "decay", 0.5f); setN (p, "sustain", 0.0f);
+        setN (p, "decayCurve", 0.9f);
+        auto punchy = renderNotes (p, sr, { 60 }, 1.5, 0.1);
+        setN (p, "decayCurve", -0.9f);
+        auto slow = renderNotes (p, sr, { 60 }, 1.5, 0.1);
+        const auto mp = stats (punchy, (int) (0.55 * sr), (int) (0.1 * sr)), ms = stats (slow, (int) (0.55 * sr), (int) (0.1 * sr));
+        check (mp.rms < ms.rms * 0.5f, "Decay curve changes the shape (" + juce::String (mp.rms, 3) + " vs " + juce::String (ms.rms, 3) + " mid-decay)");
+        setN (p, "decayCurve", 0.0f);
+
+        // velocity (Table mode, no motion: notes are consistent from one to the next)
+        setN (p, "decay", 0.4f); setN (p, "sustain", 1.0f);
+        p.apvts.getParameter ("mode")->setValueNotifyingHost (1.0f);
+        p.facetParam (InstrumentProcessor::motion).setValueNotifyingHost (0.0f);
+        auto renderVel = [&] (float vel)
+        {
+            juce::AudioBuffer<float> out (2, (int) (0.5 * sr));
+            juce::MidiBuffer midi;
+            midi.addEvent (juce::MidiMessage::noteOn (1, 60, vel), 0);
+            juce::AudioBuffer<float> blk (2, 512);
+            for (int pos = 0; pos < out.getNumSamples(); pos += 512)
+            {
+                juce::AudioBuffer<float> view (out.getArrayOfWritePointers(), 2, pos, juce::jmin (512, out.getNumSamples() - pos));
+                p.processBlock (view, midi);
+                midi.clear();
+            }
+            juce::MidiBuffer off; off.addEvent (juce::MidiMessage::allNotesOff (1), 0);
+            juce::AudioBuffer<float> tail (2, 512);
+            for (int i = 0; i < 400; ++i) p.processBlock (tail, off), off.clear();
+            return stats (out, (int) (0.2 * sr), (int) (0.25 * sr)).rms;
+        };
+        setN (p, "ampVelocity", 1.0f);
+        const float soft = renderVel (0.2f), hard = renderVel (1.0f);
+        setN (p, "ampVelocity", 0.0f);
+        const float hardFlat = renderVel (1.0f), softFlat = renderVel (0.2f);
+        const float again = renderVel (1.0f);
+        check (std::abs (again / hardFlat - 1.0f) < 0.1f, "Table notes are consistent in level from one to the next");
+        check (hard / soft > 3.0f && std::abs (hardFlat / softFlat - 1.0f) < 0.15f,
+               "Velocity amount works (" + juce::String (hard / soft, 1) + "x at 100%, " + juce::String (hardFlat / softFlat, 2) + "x at 0%)");
     }
 
     // ---------------------------------------------------------------- randomiser
@@ -384,6 +475,12 @@ int main (int argc, char** argv)
                 b->toFront (false);
             }
         snapshot (ed.get(), outDir.getChildFile ("ui-instrument-browser.png"));
+        for (auto* c : ed->getChildren()[0]->getChildren())
+            if (auto* b = dynamic_cast<PresetBrowser*> (c)) b->setVisible (false);
+        p.loadPreset (35); // a pluck with a tone envelope
+        for (auto* c : ed->getChildren()[0]->getChildren())
+            if (auto* se = dynamic_cast<ShapeEditor*> (c)) { se->setVisible (true); se->toFront (false); }
+        snapshot (ed.get(), outDir.getChildFile ("ui-shape-editor.png"));
         check (true, "Instrument editor snapshots written");
         ed.reset();
     }

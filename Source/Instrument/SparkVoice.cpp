@@ -48,47 +48,88 @@ void SparkVoice::setCurrentPlaybackSampleRate (double newRate)
 {
     SynthesiserVoice::setCurrentPlaybackSampleRate (newRate);
     if (newRate > 0)
-        adsr.setSampleRate (newRate);
+    {
+        ampEnv.setSampleRate (newRate);
+        toneEnv.setSampleRate (newRate);
+        filter.prepare ({ newRate, (juce::uint32) chunkSize, 2 });
+        filter.setType (juce::dsp::StateVariableTPTFilterType::lowpass);
+        filter.setResonance (0.85f);
+    }
 }
 
-void SparkVoice::updateEnvelope()
-{
-    auto& p = processor.params;
-    juce::ADSR::Parameters e;
-    e.attack = fmt::envSeconds (p.attack->load());
-    e.decay = fmt::envSeconds (p.decay->load());
-    e.sustain = p.sustain->load();
-    e.release = fmt::envSeconds (p.release->load());
-    adsr.setParameters (e);
-}
-
-void SparkVoice::startNote (int midiNote, float velocity, juce::SynthesiserSound*, int pitchWheel)
+void SparkVoice::startNote (int midiNote, float vel, juce::SynthesiserSound*, int pitchWheel)
 {
     source = processor.getSource();
     note = midiNote;
-    velocityGain = 0.25f + 0.75f * velocity;
+    velocity = vel;
     pitchWheelMoved (pitchWheel);
 
     for (auto& g : grains) g.active = false;
     samplesToNextGrain = 0.0;
-    for (auto& ph : phases) ph = random.nextDouble();
+    // Unison oscillators start together so every note has the same level and punch;
+    // the detune then drifts them apart naturally.
+    const double startPhase = random.nextDouble();
+    for (auto& ph : phases) ph = startPhase;
     lfoPhase = random.nextFloat() * juce::MathConstants<float>::twoPi;
 
-    updateEnvelope();
-    adsr.reset();
-    adsr.noteOn();
+    filter.reset();
+    driveAmount = processor.params.facet[InstrumentProcessor::drive]->load();
+    baseCutoff = fmt::cutoffHz (processor.params.facet[InstrumentProcessor::tone]->load());
+    ampEnv.reset();
+    toneEnv.reset();
+    ampEnv.noteOn();
+    toneEnv.noteOn();
 }
 
 void SparkVoice::stopNote (float, bool allowTailOff)
 {
     if (allowTailOff)
     {
-        adsr.noteOff();
+        ampEnv.noteOff();
+        toneEnv.noteOff();
     }
     else
     {
-        adsr.reset();
+        ampEnv.reset();
+        toneEnv.reset();
         clearCurrentNote();
+    }
+}
+
+// Per note: drive -> low-pass (swept by the tone envelope) -> amp envelope.
+void SparkVoice::processChain (float* l, float* r, int n)
+{
+    auto& p = processor.params;
+    const auto ampSettings = p.amp.settings();
+    const auto toneSettings = p.toneEnv.settings();
+
+    const float velAmp = p.ampVelocity->load();
+    const float ampGain = 1.0f - velAmp * (1.0f - velocity);
+    const float velTone = p.toneVelocity->load();
+    const float octaves = p.toneAmount->load() * 5.0f * (1.0f - velTone * (1.0f - velocity));
+
+    const float targetDrive = p.facet[InstrumentProcessor::drive]->load();
+    const float targetCutoff = fmt::cutoffHz (p.facet[InstrumentProcessor::tone]->load());
+    const float nyquistSafe = (float) getSampleRate() * 0.45f;
+
+    for (int i = 0; i < n; ++i)
+    {
+        // gentle per-sample smoothing of the facet values
+        driveAmount += (targetDrive - driveAmount) * 0.002f;
+        baseCutoff += (targetCutoff - baseCutoff) * 0.002f;
+
+        const float te = toneEnv.next (toneSettings);
+        if ((i & 15) == 0)
+        {
+            const float hz = baseCutoff * std::exp2 (octaves * te);
+            filter.setCutoffFrequency (juce::jlimit (20.0f, nyquistSafe, hz));
+        }
+
+        const float g = 1.0f + driveAmount * 12.0f;
+        const float makeup = 1.0f / std::sqrt (g);
+        const float env = ampEnv.next (ampSettings) * ampGain;
+        l[i] = filter.processSample (0, std::tanh (g * l[i]) * makeup) * env;
+        r[i] = filter.processSample (1, std::tanh (g * r[i]) * makeup) * env;
     }
 }
 
@@ -197,7 +238,6 @@ void SparkVoice::renderNextBlock (juce::AudioBuffer<float>& out, int startSample
         return;
 
     auto& p = processor.params;
-    updateEnvelope();
 
     const float pitchSt = fmt::semitoneValue (p.facet[InstrumentProcessor::pitch]->load());
     const float position = p.facet[InstrumentProcessor::position]->load();
@@ -229,12 +269,7 @@ void SparkVoice::renderNextBlock (juce::AudioBuffer<float>& out, int startSample
             renderGrains (l, r, n, *source, ratio, position, grainSec, motion, scan);
         }
 
-        for (int i = 0; i < n; ++i)
-        {
-            const float env = adsr.getNextSample() * velocityGain;
-            l[i] *= env;
-            r[i] *= env;
-        }
+        processChain (l, r, n);
 
         out.addFrom (0, startSample, l, n);
         if (out.getNumChannels() > 1)
@@ -243,7 +278,7 @@ void SparkVoice::renderNextBlock (juce::AudioBuffer<float>& out, int startSample
         startSample += n;
         numSamples -= n;
 
-        if (! adsr.isActive())
+        if (! ampEnv.isActive())
         {
             clearCurrentNote();
             break;

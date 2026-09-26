@@ -147,145 +147,473 @@ void SourcePanel::paint (juce::Graphics& g)
 }
 
 // =====================================================================================
-ShapePanel::ShapePanel (InstrumentProcessor& p)
-    : processor (p),
-      attack (p.apvts.getParameter ("attack")),
-      decay (p.apvts.getParameter ("decay")),
-      sustain (p.apvts.getParameter ("sustain")),
-      release (p.apvts.getParameter ("release"))
+EnvelopeRefs EnvelopeRefs::from (juce::AudioProcessorValueTreeState& s, const juce::String& prefix)
 {
-    setTooltip ("Drag the points to shape how each note starts, holds and fades");
+    auto get = [&] (const juce::String& stage)
+    {
+        const auto id = prefix.isEmpty() ? stage.substring (0, 1).toLowerCase() + stage.substring (1) : prefix + stage;
+        auto* p = s.getParameter (id);
+        jassert (p != nullptr);
+        return p;
+    };
+    return { get ("Attack"), get ("Hold"), get ("Decay"), get ("Sustain"), get ("Release"),
+             get ("AttackCurve"), get ("DecayCurve"), get ("ReleaseCurve") };
+}
+
+EnvelopeGraph::EnvelopeGraph (EnvelopeRefs e, bool hold) : env (e), showHold (hold)
+{
     startTimerHz (20);
 }
 
-ShapePanel::Geometry ShapePanel::geometry() const
+EnvelopeGraph::Geometry EnvelopeGraph::geometry() const
 {
-    Geometry geo;
-    geo.left = graph.getX() + 4.0f;
-    geo.right = graph.getRight() - 4.0f;
-    geo.top = graph.getY() + 8.0f;
-    geo.bottom = graph.getBottom() - 4.0f;
+    Geometry g;
+    auto b = getLocalBounds().toFloat().reduced (8.0f, 8.0f);
+    g.top = b.getY() + 2.0f;
+    g.bottom = b.getBottom() - (getHeight() > 120 ? 14.0f : 0.0f);
+    const float h = g.bottom - g.top;
+    const float sustainW = b.getWidth() * 0.14f;
+    const float holdFactor = showHold ? 0.5f : 0.0f;
+    g.minW = 6.0f;
+    g.segW = (b.getWidth() - sustainW - 3.0f * g.minW) / (3.0f + holdFactor);
+
+    // Zoom so the envelope fills most of the width (short plucks get room to edit).
+    const float wa = g.minW + env.attack->getValue() * g.segW;
+    const float wh = showHold ? env.hold->getValue() * g.segW * holdFactor : 0.0f;
+    const float wd = g.minW + env.decay->getValue() * g.segW;
+    const float wr = g.minW + env.release->getValue() * g.segW;
+    const float natural = wa + wh + wd + sustainW + wr;
+    const float zoom = dragging != none ? frozenZoom
+                                        : juce::jlimit (1.0f, 4.0f, b.getWidth() * 0.9f / juce::jmax (1.0f, natural));
+    g.segW *= zoom;
+    g.minW *= zoom;
+
+    g.x0 = b.getX();
+    g.xA = g.x0 + wa * zoom;
+    g.xH = g.xA + wh * zoom;
+    g.xD = g.xH + wd * zoom;
+    g.xS = g.xD + sustainW * zoom;
+    g.xR = g.xS + wr * zoom;
+    g.zoom = zoom;
+
+    const float s = env.sustain->getValue();
+    const float sy = g.bottom - s * h;
+    const float ac = env.attackCurve->convertFrom0to1 (env.attackCurve->getValue());
+    const float dc = env.decayCurve->convertFrom0to1 (env.decayCurve->getValue());
+    const float rc = env.releaseCurve->convertFrom0to1 (env.releaseCurve->getValue());
+
+    g.point[0] = { g.xA, g.top };
+    g.point[1] = { g.xH, g.top };
+    g.point[2] = { g.xD, sy };
+    g.point[3] = { g.xS, sy };
+    g.point[4] = { g.xR, g.bottom };
+    g.handle[0] = { (g.x0 + g.xA) * 0.5f, g.bottom - Envelope::shape (0.5f, ac) * h };
+    g.handle[1] = { (g.xH + g.xD) * 0.5f, g.bottom - (s + (1.0f - s) * (1.0f - Envelope::shape (0.5f, dc))) * h };
+    g.handle[2] = { (g.xS + g.xR) * 0.5f, g.bottom - s * (1.0f - Envelope::shape (0.5f, rc)) * h };
+    return g;
+}
+
+juce::Path EnvelopeGraph::curvePath (const Geometry& g) const
+{
+    const float h = g.bottom - g.top;
+    const float s = env.sustain->getValue();
+    const float ac = env.attackCurve->convertFrom0to1 (env.attackCurve->getValue());
+    const float dc = env.decayCurve->convertFrom0to1 (env.decayCurve->getValue());
+    const float rc = env.releaseCurve->convertFrom0to1 (env.releaseCurve->getValue());
+    const int steps = 32;
+
+    juce::Path p;
+    p.startNewSubPath (g.x0, g.bottom);
+    for (int i = 1; i <= steps; ++i)
+    {
+        const float t = (float) i / steps;
+        p.lineTo (g.x0 + (g.xA - g.x0) * t, g.bottom - Envelope::shape (t, ac) * h);
+    }
+    p.lineTo (g.xH, g.top);
+    for (int i = 1; i <= steps; ++i)
+    {
+        const float t = (float) i / steps;
+        p.lineTo (g.xH + (g.xD - g.xH) * t, g.bottom - (s + (1.0f - s) * (1.0f - Envelope::shape (t, dc))) * h);
+    }
+    p.lineTo (g.xS, g.bottom - s * h);
+    for (int i = 1; i <= steps; ++i)
+    {
+        const float t = (float) i / steps;
+        p.lineTo (g.xS + (g.xR - g.xS) * t, g.bottom - s * (1.0f - Envelope::shape (t, rc)) * h);
+    }
+    return p;
+}
+
+void EnvelopeGraph::paint (juce::Graphics& g)
+{
+    using namespace colours;
+    auto b = getLocalBounds().toFloat();
+    g.setColour (bg);
+    g.fillRoundedRectangle (b, 10.0f);
+    g.setColour (line);
+    g.drawRoundedRectangle (b.reduced (0.5f), 10.0f, 1.0f);
+
+    const auto geo = geometry();
+    const bool dim = isDimmed && isDimmed();
+    const float alpha = dim ? 0.35f : 1.0f;
+
+    // stage dividers
+    g.setColour (faint);
+    for (float x : { geo.xA, geo.xH, geo.xD, geo.xS })
+        g.fillRect (x - 0.5f, geo.top, 1.0f, geo.bottom - geo.top);
+
+    auto path = curvePath (geo);
+    juce::Path fill (path);
+    fill.lineTo (geo.xR, geo.bottom);
+    fill.closeSubPath();
+    g.setColour (gold.withAlpha (0.12f * alpha));
+    g.fillPath (fill);
+    g.setColour (gold.withAlpha (alpha));
+    g.strokePath (path, juce::PathStrokeType (2.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+
+    // curve handles
+    for (int i = 0; i < 3; ++i)
+    {
+        const bool active = hovered == attackHandle + i || dragging == attackHandle + i;
+        auto r = juce::Rectangle<float> (active ? 11.0f : 8.0f, active ? 11.0f : 8.0f).withCentre (geo.handle[i]);
+        g.setColour (bg);
+        g.fillEllipse (r);
+        g.setColour ((active ? gold : text2).withAlpha (alpha));
+        g.drawEllipse (r, 1.5f);
+    }
+    // points
+    for (int i = 0; i < 5; ++i)
+    {
+        if (i == 1 && ! showHold) continue;
+        const bool active = hovered == i || dragging == i;
+        const float rad = active ? 5.5f : 4.0f;
+        g.setColour ((active ? gold : text).withAlpha (alpha));
+        g.fillEllipse (juce::Rectangle<float> (rad * 2.0f, rad * 2.0f).withCentre (geo.point[i]));
+    }
+
+    if (getHeight() > 120)
+    {
+        g.setColour (muted);
+        g.setFont (fonts::body (10.0f, true).withExtraKerningFactor (0.14f));
+        auto lab = [&] (const juce::String& t, float x0, float x1)
+        {
+            if (x1 - x0 > 10.0f)
+                g.drawText (t, juce::Rectangle<float> (x0, geo.bottom + 2.0f, x1 - x0, 12.0f), juce::Justification::centred, false);
+        };
+        lab ("A", geo.x0, geo.xA);
+        if (showHold) lab ("H", geo.xA, geo.xH);
+        lab ("D", geo.xH, geo.xD);
+        lab ("S", geo.xD, geo.xS);
+        lab ("R", geo.xS, geo.xR);
+    }
+
+    if (dim)
+    {
+        g.setColour (muted);
+        g.setFont (fonts::body (12.0f));
+        g.drawText ("Turn up Amount to hear this envelope", b, juce::Justification::centred, false);
+    }
+}
+
+EnvelopeGraph::Target EnvelopeGraph::targetAt (juce::Point<float> p) const
+{
+    const auto geo = geometry();
+    Target best = none;
+    float bestD = 12.0f;
+    for (int i = 0; i < 5; ++i)
+    {
+        if (i == 1 && ! showHold) continue;
+        if (auto d = geo.point[i].getDistanceFrom (p); d < bestD) { bestD = d; best = (Target) i; }
+    }
+    for (int i = 0; i < 3; ++i)
+        if (auto d = geo.handle[i].getDistanceFrom (p); d < bestD) { bestD = d; best = (Target) (attackHandle + i); }
+    return best;
+}
+
+std::vector<juce::RangedAudioParameter*> EnvelopeGraph::paramsFor (Target t) const
+{
+    switch (t)
+    {
+        case attackPt:      return { env.attack };
+        case holdPt:        return { env.hold };
+        case decayPt:       return { env.decay, env.sustain };
+        case sustainPt:     return { env.sustain };
+        case releasePt:     return { env.release };
+        case attackHandle:  return { env.attackCurve };
+        case decayHandle:   return { env.decayCurve };
+        case releaseHandle: return { env.releaseCurve };
+        case none:          break;
+    }
+    return {};
+}
+
+void EnvelopeGraph::mouseMove (const juce::MouseEvent& e)
+{
+    const auto t = targetAt (e.position);
+    if (t == hovered)
+        return;
+    hovered = t;
+    const bool isHandle = t >= attackHandle;
+    setMouseCursor (t == none ? juce::MouseCursor::NormalCursor
+                              : (isHandle || t == sustainPt ? juce::MouseCursor::UpDownResizeCursor
+                                                             : (t == decayPt ? juce::MouseCursor::DraggingHandCursor
+                                                                             : juce::MouseCursor::LeftRightResizeCursor)));
+    static const char* tips[] = { "Attack time: drag sideways", "Hold time: drag sideways",
+                                  "Decay time (sideways) and sustain level (up/down)", "Sustain level: drag up or down",
+                                  "Release time: drag sideways", "Attack curve: drag up for punchy, down for a slow swell",
+                                  "Decay curve: drag down for a snappy drop, up for a slow fade",
+                                  "Release curve: drag down for a snappy tail, up for a slow fade" };
+    setTooltip (t == none ? juce::String() : juce::String (tips[t]) + ". Double-click to reset.");
+    repaint();
+}
+
+void EnvelopeGraph::mouseExit (const juce::MouseEvent&)
+{
+    hovered = none;
+    repaint();
+}
+
+void EnvelopeGraph::mouseDown (const juce::MouseEvent& e)
+{
+    frozenZoom = geometry().zoom;
+    dragging = targetAt (e.position);
+    dragStart.clear();
+    for (auto* p : paramsFor (dragging))
+    {
+        dragStart[p] = p->getValue();
+        p->beginChangeGesture();
+    }
+}
+
+void EnvelopeGraph::mouseDrag (const juce::MouseEvent& e)
+{
+    if (dragging == none)
+        return;
+    const auto geo = geometry();
+    const float fine = e.mods.isShiftDown() ? 0.2f : 1.0f;
+    const float dx = (float) e.getDistanceFromDragStartX() * fine;
+    const float dy = (float) e.getDistanceFromDragStartY() * fine;
     const float h = geo.bottom - geo.top;
-    const float ax = geo.left + attack->getValue() * 60.0f;
-    const float dx = ax + 10.0f + decay->getValue() * 60.0f;
-    const float sy = geo.bottom - sustain->getValue() * h;
-    const float rx = geo.right - 10.0f - release->getValue() * 60.0f;
-    geo.attack = { ax, geo.top };
-    geo.decay = { dx, sy };
-    geo.release = { rx, sy };
-    return geo;
+    auto set = [&] (juce::RangedAudioParameter* p, float delta)
+    {
+        p->setValueNotifyingHost (juce::jlimit (0.0f, 1.0f, dragStart[p] + delta));
+    };
+
+    switch (dragging)
+    {
+        case attackPt:  set (env.attack, dx / geo.segW); break;
+        case holdPt:    set (env.hold, dx / (geo.segW * 0.5f)); break;
+        case decayPt:   set (env.decay, dx / geo.segW); set (env.sustain, -dy / h); break;
+        case sustainPt: set (env.sustain, -dy / h); break;
+        case releasePt: set (env.release, dx / geo.segW); break;
+        case attackHandle:  set (env.attackCurve, -dy / h); break;   // up = punchier rise
+        case decayHandle:   set (env.decayCurve, dy / h); break;     // down = snappier drop
+        case releaseHandle: set (env.releaseCurve, dy / h); break;
+        case none: break;
+    }
+    repaint();
+}
+
+void EnvelopeGraph::mouseUp (const juce::MouseEvent&)
+{
+    for (auto* p : paramsFor (dragging))
+        p->endChangeGesture();
+    dragging = none;
+    repaint();
+}
+
+void EnvelopeGraph::mouseDoubleClick (const juce::MouseEvent& e)
+{
+    for (auto* p : paramsFor (targetAt (e.position)))
+    {
+        p->beginChangeGesture();
+        p->setValueNotifyingHost (p->getDefaultValue());
+        p->endChangeGesture();
+    }
+}
+
+// =====================================================================================
+ShapePanel::ShapePanel (InstrumentProcessor& p)
+    : processor (p),
+      ampRefs (EnvelopeRefs::from (p.apvts, {})),
+      toneRefs (EnvelopeRefs::from (p.apvts, "tone")),
+      ampGraph (ampRefs, true),
+      toneGraph (toneRefs, false)
+{
+    for (auto* b : { &ampTab, &toneTab })
+    {
+        addAndMakeVisible (b);
+        b->setFontHeight (10.0f);
+        b->setLetterSpacing (0.14f);
+    }
+    addAndMakeVisible (expand);
+    addChildComponent (ampGraph);
+    addChildComponent (toneGraph);
+    ampTab.setTooltip ("Amp envelope: the volume of each note");
+    toneTab.setTooltip ("Tone envelope: sweeps the Tone filter on each note");
+    expand.setTooltip ("Open the full shape editor");
+    expand.setTitle ("Open shape editor");
+    toneGraph.isDimmed = [this] { return std::abs (processor.apvts.getRawParameterValue ("toneAmount")->load()) < 0.005f; };
+
+    auto& s = p.apvts;
+    ampBoxes.add (new ValueBox (*ampRefs.attack, "A", "Attack time"));
+    ampBoxes.add (new ValueBox (*ampRefs.hold, "H", "Hold time at full level"));
+    ampBoxes.add (new ValueBox (*ampRefs.decay, "D", "Decay time"));
+    ampBoxes.add (new ValueBox (*ampRefs.sustain, "S", "Sustain level"));
+    ampBoxes.add (new ValueBox (*ampRefs.release, "R", "Release time"));
+    toneBoxes.add (new ValueBox (*s.getParameter ("toneAmount"), "AMT", "How far the envelope opens (or closes) the Tone filter"));
+    toneBoxes.add (new ValueBox (*toneRefs.attack, "A", "Tone attack"));
+    toneBoxes.add (new ValueBox (*toneRefs.decay, "D", "Tone decay"));
+    toneBoxes.add (new ValueBox (*toneRefs.sustain, "S", "Tone sustain"));
+    toneBoxes.add (new ValueBox (*toneRefs.release, "R", "Tone release"));
+    for (auto* b : ampBoxes) addChildComponent (b);
+    for (auto* b : toneBoxes) addChildComponent (b);
+
+    ampTab.onClick = [this] { showTone (false); };
+    toneTab.onClick = [this] { showTone (true); };
+    expand.onClick = [this] { if (onExpand) onExpand(); };
+    showTone (false);
+}
+
+void ShapePanel::showTone (bool tone)
+{
+    toneShown = tone;
+    ampTab.setToggleState (! tone, juce::dontSendNotification);
+    toneTab.setToggleState (tone, juce::dontSendNotification);
+    ampGraph.setVisible (! tone);
+    toneGraph.setVisible (tone);
+    for (auto* b : ampBoxes) b->setVisible (! tone);
+    for (auto* b : toneBoxes) b->setVisible (tone);
+    repaint();
+}
+
+void ShapePanel::resized()
+{
+    expand.setBounds (getWidth() - 16 - 28, 11, 28, 28);
+    toneTab.setBounds (expand.getX() - 10 - 2 - 50, 13, 50, 24);
+    ampTab.setBounds (toneTab.getX() - 48, 13, 48, 24);
+    ampGraph.setBounds (16, 46, getWidth() - 32, 74);
+    toneGraph.setBounds (ampGraph.getBounds());
+    const int w = (getWidth() - 32) / 5;
+    for (int i = 0; i < 5; ++i)
+    {
+        ampBoxes[i]->setBounds (16 + i * w, 124, w, 36);
+        toneBoxes[i]->setBounds (16 + i * w, 124, w, 36);
+    }
 }
 
 void ShapePanel::paint (juce::Graphics& g)
 {
-    using namespace colours;
     drawPanel (g, getLocalBounds().toFloat());
-    drawSectionLabel (g, "SHAPE", { 16.0f, 14.0f, 100.0f, 20.0f });
+    drawSectionLabel (g, "SHAPE", { 16.0f, 12.0f, 100.0f, 26.0f });
+    auto seg = ampTab.getBounds().getUnion (toneTab.getBounds()).toFloat().expanded (2.0f);
+    g.setColour (colours::line2);
+    g.drawRoundedRectangle (seg, seg.getHeight() * 0.5f, 1.0f);
+}
 
-    const auto geo = geometry();
-    juce::Path line;
-    line.startNewSubPath (geo.left, geo.bottom);
-    line.lineTo (geo.attack);
-    line.quadraticTo (geo.attack.x + 6.0f, geo.decay.y, geo.decay.x, geo.decay.y);
-    line.lineTo (geo.release);
-    line.quadraticTo (geo.release.x + 6.0f, geo.bottom, geo.right, geo.bottom);
+// =====================================================================================
+ShapeEditor::ShapeEditor (InstrumentProcessor& p)
+    : processor (p),
+      ampRefs (EnvelopeRefs::from (p.apvts, {})),
+      toneRefs (EnvelopeRefs::from (p.apvts, "tone")),
+      ampGraph (ampRefs, true),
+      toneGraph (toneRefs, true)
+{
+    setWantsKeyboardFocus (true);
+    addAndMakeVisible (ampGraph);
+    addAndMakeVisible (toneGraph);
+    addAndMakeVisible (close);
+    close.setTooltip ("Close (Esc)");
+    close.setTitle ("Close shape editor");
+    close.onClick = [this] { if (onClose) onClose(); };
+    toneGraph.isDimmed = [this] { return std::abs (processor.apvts.getRawParameterValue ("toneAmount")->load()) < 0.005f; };
 
-    juce::Path fill (line);
-    fill.closeSubPath();
-    g.setColour (gold.withAlpha (0.12f));
-    g.fillPath (fill);
-    g.setColour (gold);
-    g.strokePath (line, juce::PathStrokeType (2.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-
-    const juce::Point<float> pts[] = { geo.attack, geo.decay, geo.release };
-    for (int i = 0; i < 3; ++i)
+    auto& s = p.apvts;
+    auto addBoxes = [] (juce::OwnedArray<ValueBox>& arr, const EnvelopeRefs& r, const juce::String& what)
     {
-        const float r = (i == hovered || i == dragging) ? 5.5f : 4.0f;
-        g.setColour (i == dragging ? gold : text);
-        g.fillEllipse (juce::Rectangle<float> (r * 2.0f, r * 2.0f).withCentre (pts[i]));
-    }
+        arr.add (new ValueBox (*r.attack, "ATTACK", what + " attack time"));
+        arr.add (new ValueBox (*r.hold, "HOLD", what + " hold time at full level"));
+        arr.add (new ValueBox (*r.decay, "DECAY", what + " decay time"));
+        arr.add (new ValueBox (*r.sustain, "SUSTAIN", what + " sustain level"));
+        arr.add (new ValueBox (*r.release, "RELEASE", what + " release time"));
+        arr.add (new ValueBox (*r.attackCurve, "A CURVE", what + " attack curve"));
+        arr.add (new ValueBox (*r.decayCurve, "D CURVE", what + " decay curve"));
+        arr.add (new ValueBox (*r.releaseCurve, "R CURVE", what + " release curve"));
+    };
+    addBoxes (ampBoxes, ampRefs, "Amp");
+    ampBoxes.add (new ValueBox (*s.getParameter ("ampVelocity"), "VELOCITY", "How much playing harder makes notes louder"));
+    addBoxes (toneBoxes, toneRefs, "Tone");
+    toneBoxes.add (new ValueBox (*s.getParameter ("toneAmount"), "AMOUNT", "How far the envelope opens (positive) or closes (negative) the Tone filter"));
+    toneBoxes.add (new ValueBox (*s.getParameter ("toneVelocity"), "VELOCITY", "How much playing harder deepens the sweep"));
+    for (auto* b : ampBoxes) { b->framed = true; addAndMakeVisible (b); }
+    for (auto* b : toneBoxes) { b->framed = true; addAndMakeVisible (b); }
+}
 
-    const juce::String labels[] = { "A", "D", "S", "R" };
-    juce::RangedAudioParameter* ps[] = { attack, decay, sustain, release };
-    const float colW = graph.getWidth() / 4.0f;
-    for (int i = 0; i < 4; ++i)
+void ShapeEditor::resized()
+{
+    close.setBounds (getWidth() - 16 - 36, 14, 36, 36);
+    const int cardW = (getWidth() - 48) / 2;
+    auto layoutCard = [&] (int x, EnvelopeGraph& graph, juce::OwnedArray<ValueBox>& boxes)
     {
-        auto col = juce::Rectangle<float> (graph.getX() + colW * (float) i, graph.getBottom() + 6.0f, colW, 30.0f);
-        g.setColour (muted);
-        g.setFont (fonts::body (10.0f, true).withExtraKerningFactor (0.14f));
-        g.drawText (labels[i], col.removeFromTop (13.0f), juce::Justification::centred, false);
+        graph.setBounds (x + 16, 110, cardW - 32, 170);
+        const int bw = (cardW - 32 - 4 * 6) / 5;
+        for (int i = 0; i < boxes.size(); ++i)
+        {
+            const int row = i < 5 ? 0 : 1;
+            const int col = i < 5 ? i : i - 5;
+            boxes[i]->setBounds (x + 16 + col * (bw + 6), 290 + row * 50, bw, 42);
+        }
+    };
+    layoutCard (16, ampGraph, ampBoxes);
+    layoutCard (32 + cardW, toneGraph, toneBoxes);
+}
+
+void ShapeEditor::paint (juce::Graphics& g)
+{
+    using namespace colours;
+    auto b = getLocalBounds().toFloat();
+    g.setColour (bg);
+    g.fillRoundedRectangle (b, 16.0f);
+    g.setColour (line2);
+    g.drawRoundedRectangle (b.reduced (0.5f), 16.0f, 1.0f);
+
+    drawSectionLabel (g, "SHAPE", { 20.0f, 16.0f, 100.0f, 32.0f });
+    g.setColour (muted);
+    g.setFont (fonts::body (12.0f));
+    g.drawText ("Drag points to set times and levels. Drag the small circles to bend each curve. Hold Shift for fine moves.",
+                juce::Rectangle<float> (106.0f, 16.0f, (float) close.getX() - 120.0f, 32.0f), juce::Justification::centredLeft, true);
+    g.setColour (line);
+    g.fillRect (16, 62, getWidth() - 32, 1);
+
+    const int cardW = (getWidth() - 48) / 2;
+    auto card = [&] (int x, const juce::String& title, const juce::String& sub)
+    {
+        auto r = juce::Rectangle<float> ((float) x, 74.0f, (float) cardW, (float) getHeight() - 90.0f);
+        drawPanel (g, r, 14.0f);
         g.setColour (text);
-        g.setFont (fonts::mono (11.0f));
-        g.drawText (ps[i]->getCurrentValueAsText(), col, juce::Justification::centred, false);
-    }
+        g.setFont (fonts::display (15.0f).withExtraKerningFactor (0.12f));
+        g.drawText (title, juce::Rectangle<float> (r.getX() + 16.0f, r.getY() + 8.0f, 120.0f, 24.0f), juce::Justification::centredLeft, false);
+        g.setColour (muted);
+        g.setFont (fonts::body (12.0f));
+        g.drawText (sub, juce::Rectangle<float> (r.getX() + 90.0f, r.getY() + 8.0f, r.getWidth() - 106.0f, 24.0f), juce::Justification::centredRight, false);
+    };
+    card (16, "AMP", "The volume of each note");
+    card (32 + cardW, "TONE", "Sweeps the Tone filter on each note");
 }
 
-int ShapePanel::pointAt (juce::Point<float> p) const
+bool ShapeEditor::keyPressed (const juce::KeyPress& k)
 {
-    const auto geo = geometry();
-    const juce::Point<float> pts[] = { geo.attack, geo.decay, geo.release };
-    int best = -1;
-    float bestD = 12.0f;
-    for (int i = 0; i < 3; ++i)
-        if (auto d = pts[i].getDistanceFrom (p); d < bestD) { bestD = d; best = i; }
-    return best;
-}
-
-void ShapePanel::mouseMove (const juce::MouseEvent& e)
-{
-    const int h = pointAt (e.position);
-    if (h != hovered)
+    if (k == juce::KeyPress::escapeKey)
     {
-        hovered = h;
-        setMouseCursor (h >= 0 ? juce::MouseCursor::DraggingHandCursor : juce::MouseCursor::NormalCursor);
-        repaint();
+        if (onClose) onClose();
+        return true;
     }
-}
-
-void ShapePanel::mouseDown (const juce::MouseEvent& e)
-{
-    dragging = pointAt (e.position);
-    for (auto* p : { attack, decay, sustain, release })
-        if (dragging >= 0) p->beginChangeGesture();
-}
-
-void ShapePanel::mouseDrag (const juce::MouseEvent& e)
-{
-    if (dragging < 0)
-        return;
-    const auto geo = geometry();
-    const float h = geo.bottom - geo.top;
-    auto setP = [] (juce::RangedAudioParameter* p, float v) { p->setValueNotifyingHost (juce::jlimit (0.0f, 1.0f, v)); };
-
-    if (dragging == 0)
-    {
-        setP (attack, (e.position.x - geo.left) / 60.0f);
-    }
-    else if (dragging == 1)
-    {
-        setP (decay, (e.position.x - geo.attack.x - 10.0f) / 60.0f);
-        setP (sustain, (geo.bottom - e.position.y) / h);
-    }
-    else
-    {
-        setP (release, (geo.right - 10.0f - e.position.x) / 60.0f);
-        setP (sustain, (geo.bottom - e.position.y) / h);
-    }
-    repaint();
-}
-
-void ShapePanel::mouseUp (const juce::MouseEvent&)
-{
-    if (dragging >= 0)
-        for (auto* p : { attack, decay, sustain, release })
-            p->endChangeGesture();
-    dragging = -1;
-    repaint();
+    return false;
 }
 
 // =====================================================================================
 InstrumentEditor::InstrumentEditor (InstrumentProcessor& p)
-    : SparkEditorBase (p, false), processor (p), source (p), shape (p)
+    : SparkEditorBase (p, false), processor (p), source (p), shape (p), shapeEditor (p)
 {
     auto col = leftColumn();
     source.setBounds (col.removeFromTop (252));
@@ -293,6 +621,17 @@ InstrumentEditor::InstrumentEditor (InstrumentProcessor& p)
     shape.setBounds (col);
     content().addAndMakeVisible (source);
     content().addAndMakeVisible (shape);
+
+    content().addChildComponent (shapeEditor);
+    shapeEditor.setBounds (24, 86, 1072, 440);
+    shapeEditor.onClose = [this] { shapeEditor.setVisible (false); };
+    shape.onExpand = [this]
+    {
+        const bool show = ! shapeEditor.isVisible();
+        if (show) setBrowserVisible (false);
+        shapeEditor.setVisible (show);
+        if (show) shapeEditor.toFront (true);
+    };
 
     source.onImport = [this] { chooseFileToImport(); };
     source.onMakeTable = [this] { processor.makeTableFromSample(); };
@@ -368,6 +707,7 @@ void InstrumentEditor::exportWavetable()
 
 void InstrumentEditor::addExtraMenuItems (juce::PopupMenu& m)
 {
+    m.addItem ("Shape editor...", [this] { setBrowserVisible (false); shapeEditor.setVisible (true); shapeEditor.toFront (true); });
     m.addItem ("Load sample or wavetable...", [this] { chooseFileToImport(); });
     m.addItem ("Make wavetable from sample", [this] { processor.makeTableFromSample(); });
     m.addItem ("Export wavetable...", [this] { exportWavetable(); });

@@ -7,7 +7,7 @@
 
 namespace spark
 {
-enum class Icon { none, chevronLeft, chevronRight, chevronDown, settings, undo, star, lock, unlock, upload, snowflake, cross, shuffle, search };
+enum class Icon { none, chevronLeft, chevronRight, chevronDown, settings, undo, star, lock, unlock, upload, snowflake, cross, shuffle, search, expand };
 juce::Path makeIcon (Icon, juce::Rectangle<float> area);
 
 // Rounded pill button in Spark's styles.
@@ -123,6 +123,30 @@ private:
     juce::ParameterAttachment attachment;
     juce::String label;
     float value = 0.0f, dragStart = 0.0f;
+};
+
+// A labelled number you drag up/down to change (Shift = fine, double-click = reset, wheel works too).
+class ValueBox : public juce::Component,
+                 public juce::SettableTooltipClient
+{
+public:
+    ValueBox (juce::RangedAudioParameter&, const juce::String& label, const juce::String& tooltip = {});
+    void paint (juce::Graphics&) override;
+    void mouseEnter (const juce::MouseEvent&) override { hover = true; repaint(); }
+    void mouseExit (const juce::MouseEvent&) override { hover = false; repaint(); }
+    void mouseDown (const juce::MouseEvent&) override;
+    void mouseDrag (const juce::MouseEvent&) override;
+    void mouseUp (const juce::MouseEvent&) override;
+    void mouseDoubleClick (const juce::MouseEvent&) override;
+    void mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelDetails&) override;
+    bool framed = false; // draw a rounded box behind it
+
+private:
+    juce::RangedAudioParameter& param;
+    juce::ParameterAttachment attachment;
+    juce::String label;
+    float dragStart = 0.0f;
+    bool hover = false, dragging = false;
 };
 
 // Right-hand facet list with value bars and per-facet locks.
@@ -258,6 +282,7 @@ protected:
     void showMessage (const juce::String& title, const juce::String& text);
     SparkLookAndFeel& getSparkLookAndFeel() noexcept { return lookAndFeel; }
     void setBrowserVisible (bool);
+    virtual void hideOtherOverlays() {}
     void promptToSavePreset();
 
     SparkProcessorBase& sparkProcessor;

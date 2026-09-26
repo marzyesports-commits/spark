@@ -46,6 +46,8 @@ namespace fmt
     juce::String grainMs (float v);     // 5..500 ms
     juce::String driveDb (float v);     // 0..24 dB
     juce::String envTime (float v);     // 1 ms .. 5 s
+    juce::String curve (float v);       // -1..1
+    juce::String octaves (float v);     // -1..1 = -5..+5 octaves
 
     float cutoffHz (float v);
     float grainSeconds (float v);
