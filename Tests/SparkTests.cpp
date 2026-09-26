@@ -689,6 +689,54 @@ int main (int argc, char** argv)
         const auto nr = shapeshift::analyse (noise, sr);
         check (nr.ok && ! nr.pitched && nr.frames.size() == 64, "Noise is handled as a texture (no false pitch)");
 
+        // A wide supersaw (+/-18 cents, MIDI 48) with a sub oscillator an octave down, a slowly closing filter
+        // and a quick release: common in Serum patches, and hard on pitch and release detection.
+        {
+            const double f0 = 130.81; // MIDI 48
+            const double held = 2.4;
+            juce::AudioBuffer<float> wide (2, (int) (sr * 3.2));
+            juce::Random wr (5);
+            double ph[7];
+            for (auto& p0 : ph) p0 = wr.nextDouble();
+            double sl = 0, sl2 = 0, sr2 = 0, srr = 0;
+            for (int i = 0; i < wide.getNumSamples(); ++i)
+            {
+                const double t = i / sr;
+                double l = 0, r = 0;
+                for (int v = 0; v < 7; ++v)
+                {
+                    const double cents = -18.0 + 6.0 * v;
+                    ph[v] += f0 * std::pow (2.0, cents / 1200.0) / sr;
+                    ph[v] -= std::floor (ph[v]);
+                    const double pan = 0.5 + 0.45 * (v - 3) / 3.0;
+                    const double saw = 2.0 * ph[v] - 1.0;
+                    l += saw * std::cos (pan * juce::MathConstants<double>::halfPi);
+                    r += saw * std::sin (pan * juce::MathConstants<double>::halfPi);
+                }
+                const double sub = 0.35 * std::sin (juce::MathConstants<double>::twoPi * f0 * 0.5 * t);
+                l += sub; r += sub;
+                const double cutoff = 900.0 + 6100.0 * std::exp (-t / 0.45);
+                const double g = std::tan (juce::MathConstants<double>::pi * cutoff / sr), a = g / (1 + g);
+                sl += a * (l - sl); sl2 += a * (sl - sl2);
+                sr2 += a * (r - sr2); srr += a * (sr2 - srr);
+                double env = t < 0.008 ? t / 0.008 : 0.55 + 0.45 * std::exp (-(t - 0.008) / 0.25);
+                if (t >= held) env = (0.55 + 0.45 * std::exp (-(held - 0.008) / 0.25)) * std::exp (-(t - held) / 0.09);
+                wide.setSample (0, i, (float) (sl2 * env * 0.12));
+                wide.setSample (1, i, (float) (srr * env * 0.12));
+            }
+            const auto wres = shapeshift::analyse (wide, sr);
+            check (wres.pitched && juce::roundToInt (wres.midiNote) == 48,
+                   "Wide supersaw with a sub: finds the played note (" + (wres.pitched ? shapeshift::noteName (wres.midiNote) : juce::String ("none")) + ", played " + shapeshift::noteName (48.0f) + ")");
+            check (wres.release > 0.15f && wres.release < 0.7f,
+                   "Release isn't fooled by a closing filter (" + juce::String (wres.release * 1000, 0) + " ms, original ~0.4 s)");
+
+            // odd-harmonic sounds (square) must not be pushed up an octave
+            juce::AudioBuffer<float> sq (1, (int) (sr * 1.0));
+            for (int i = 0; i < sq.getNumSamples(); ++i)
+                sq.setSample (0, i, std::fmod (i * f0 / sr, 1.0) < 0.5 ? 0.3f : -0.3f);
+            check (juce::roundToInt (shapeshift::detectMidiNote (sq, sr)) == 48, "Square waves keep their octave");
+        }
+
         // Root-note detection on ordinary drops
         juce::AudioBuffer<float> a3 (1, (int) (sr * 1.0));
         for (int i = 0; i < a3.getNumSamples(); ++i) a3.setSample (0, i, 0.5f * (float) std::sin (juce::MathConstants<double>::twoPi * 220.0 * i / sr));

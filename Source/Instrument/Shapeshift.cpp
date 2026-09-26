@@ -233,23 +233,59 @@ float detectMidiNote (const juce::AudioBuffer<float>& audio, double sr)
     if (len < (int) (sr * 0.08))
         return -1.0f;
 
-    // try a few spots after the attack and take the median of the confident ones
-    std::vector<double> notes;
+    // Try a few spots after the attack. First pass: clearly periodic spots only. Second pass, for heavily
+    // detuned unison (supersaws), accept weaker periodicity as long as every spot agrees.
     const int window = juce::jmin ((int) (sr * 0.04), len / 4);
-    for (double frac : { 0.15, 0.3, 0.45 })
+    double note = -1.0;
+    for (const float threshold : { 0.2f, 0.45f })
     {
-        float ap = 1;
-        const double f = yin (x, (int) (len * frac), window, sr, 30.0, 2000.0, ap);
-        if (f > 0 && ap < 0.2f)
-            notes.push_back (69.0 + 12.0 * std::log2 (f / 440.0));
+        std::vector<double> notes;
+        for (double frac : { 0.15, 0.3, 0.45 })
+        {
+            float ap = 1;
+            const double f = yin (x, (int) (len * frac), window, sr, 30.0, 2000.0, ap);
+            if (f > 0 && ap < threshold)
+                notes.push_back (69.0 + 12.0 * std::log2 (f / 440.0));
+        }
+        const size_t needed = threshold < 0.3f ? 2 : 3;
+        if (notes.size() < needed)
+            continue;
+
+        // Octave slips (a sub oscillator doubles the period at some spots) fold onto the lowest reading.
+        const double lowest = *std::min_element (notes.begin(), notes.end());
+        bool consistent = true;
+        for (auto& n : notes)
+        {
+            const double octaves = std::round ((n - lowest) / 12.0);
+            n -= 12.0 * octaves;
+            if (std::abs (n - lowest) > 0.5) consistent = false;
+        }
+        if (! consistent)
+            continue;
+        std::sort (notes.begin(), notes.end());
+        note = notes[notes.size() / 2];
+        break;
     }
-    if (notes.size() < 2)
+    if (note < 0)
         return -1.0f;
-    std::sort (notes.begin(), notes.end());
-    const double med = notes[notes.size() / 2];
-    for (auto n : notes)
-        if (std::abs (n - med) > 0.5) return -1.0f; // unstable: not a single clear pitch
-    return (float) med;
+
+    // A sub oscillator an octave down makes the true period twice the played note's. When the odd harmonics
+    // of the detected pitch are much weaker than the even ones, the played note is an octave up.
+    for (int i = 0; i < 2; ++i)
+    {
+        const double f = 440.0 * std::pow (2.0, (note - 69.0) / 12.0);
+        if (f * 8.0 > sr * 0.45)
+            break;
+        const auto mags = harmonicBandMagnitudes (x, len * 0.3, f, sr, 8);
+        double odd = 0, even = 0;
+        for (int h = 1; h <= 8; ++h)
+            (h % 2 == 1 ? odd : even) += mags[(size_t) h] * mags[(size_t) h];
+        if (odd < even * 0.25)
+            note += 12.0;
+        else
+            break;
+    }
+    return (float) note;
 }
 
 ShapeshiftResult analyse (const juce::AudioBuffer<float>& audio, double sr)
@@ -316,6 +352,16 @@ ShapeshiftResult analyse (const juce::AudioBuffer<float>& audio, double sr)
     {
         relStart = last;
         while (relStart > peakIdx && envS[(size_t) relStart] < sustain * 0.85f) --relStart;
+
+        // A slowly closing filter can pull the level under the sustain before the key is let go, so also
+        // walk back from the end through the steep fall (over 1.5 dB per 50 ms): that is the release.
+        const auto fine = smooth (env, 3);
+        const auto dB = [&] (int k) { return 20.0f * std::log10 (juce::jmax (1.0e-6f, fine[(size_t) k])); };
+        const int step = 10;
+        int k = last;
+        while (k - step > peakIdx && dB (k - step) - dB (k) > 1.5f)
+            --k;
+        relStart = juce::jmax (relStart, juce::jmin (last, k));
     }
 
     // ---- hold and decay
