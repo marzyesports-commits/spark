@@ -141,15 +141,25 @@ jobs:
       - name: Package installer
         shell: pwsh
         run: |
-          choco install innosetup --no-progress -y | Out-Null
-          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /Q "/DAppVersion=$env:VERSION" packaging\windows\spark.iss
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          function Fail($msg) { Write-Output "::error::$($msg -replace "`r?`n", ' | ')"; exit 1 }
+          $iscc = (Get-Command iscc.exe -ErrorAction SilentlyContinue).Source
+          if (-not $iscc) { $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" }
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup --no-progress -y | Out-Null
+            $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          }
+          if (-not (Test-Path $iscc)) { Fail "Inno Setup not found" }
+          Get-ChildItem -Recurse build\Spark_artefacts\Release -Depth 2 | Select-Object -First 20 | ForEach-Object { Write-Output $_.FullName }
+          $out = & $iscc "/DAppVersion=$env:VERSION" packaging\windows\spark.iss 2>&1
+          if ($LASTEXITCODE -ne 0) { Fail ("ISCC failed: " + (($out | Select-Object -Last 12) -join ' | ')) }
           $zip = "dist\Spark-$env:VERSION-Windows-plugins"
-          New-Item -ItemType Directory -Force "$zip\VST3", "$zip\Apps" | Out-Null
-          Copy-Item -Recurse "build\Spark_artefacts\Release\VST3\Spark.vst3", "build\SparkFX_artefacts\Release\VST3\Spark FX.vst3" "$zip\VST3"
-          Copy-Item "build\Spark_artefacts\Release\Standalone\Spark.exe", "build\SparkFX_artefacts\Release\Standalone\Spark FX.exe" "$zip\Apps"
-          Compress-Archive -Path $zip -DestinationPath "$zip.zip"
-          Remove-Item -Recurse $zip
+          try {
+            New-Item -ItemType Directory -Force "$zip\VST3", "$zip\Apps" | Out-Null
+            Copy-Item -Recurse "build\Spark_artefacts\Release\VST3\Spark.vst3", "build\SparkFX_artefacts\Release\VST3\Spark FX.vst3" "$zip\VST3"
+            Copy-Item "build\Spark_artefacts\Release\Standalone\Spark.exe", "build\SparkFX_artefacts\Release\Standalone\Spark FX.exe" "$zip\Apps"
+            Compress-Archive -Path $zip -DestinationPath "$zip.zip"
+            Remove-Item -Recurse $zip
+          } catch { Fail ("Zip failed: " + $_) }
           Get-ChildItem dist
 
       - name: Upload installer
