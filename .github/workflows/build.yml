@@ -1,4 +1,4 @@
-name: Build macOS
+name: Build
 
 on:
   push:
@@ -8,14 +8,16 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write   # lets tagged builds publish a GitHub Release
+  contents: write   # lets successful main builds publish a GitHub Release
+
+env:
+  VERSION: 1.2.0
 
 jobs:
   macos:
     runs-on: macos-14
     timeout-minutes: 75
     env:
-      VERSION: 1.1.0
       # Optional signing. Add these repository secrets to get a signed, notarised installer:
       # DEVELOPER_ID_APP_P12, DEVELOPER_ID_INSTALLER_P12 (base64 .p12), P12_PASSWORD,
       # APP_SIGN_IDENTITY, INSTALLER_SIGN_IDENTITY, NOTARY_APPLE_ID, NOTARY_TEAM_ID, NOTARY_PASSWORD
@@ -78,7 +80,7 @@ jobs:
       - name: Upload installer
         uses: actions/upload-artifact@v4
         with:
-          name: Spark-${{ env.VERSION }}-macOS
+          name: Spark-mac
           path: dist/*
           if-no-files-found: error
 
@@ -107,12 +109,91 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: test-output
+          name: test-output-mac
           path: test-output/*.png
           if-no-files-found: ignore
 
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 75
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Version from tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+
+      - name: Cache JUCE download
+        uses: actions/cache@v4
+        with:
+          path: build/_deps
+          key: juce-8.0.10-${{ runner.os }}-vs2022
+
+      - name: Configure (x64)
+        run: cmake -B build -G "Visual Studio 17 2022" -A x64 -DSPARK_BUILD_TESTS=ON
+
+      - name: Build
+        run: cmake --build build --config Release --target Spark_VST3 Spark_Standalone SparkFX_VST3 SparkFX_Standalone SparkTests --parallel 4
+
+      - name: Package installer
+        shell: pwsh
+        run: |
+          choco install innosetup --no-progress -y | Out-Null
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /Q "/DAppVersion=$env:VERSION" packaging\windows\spark.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $zip = "dist\Spark-$env:VERSION-Windows-plugins"
+          New-Item -ItemType Directory -Force "$zip\VST3", "$zip\Apps" | Out-Null
+          Copy-Item -Recurse "build\Spark_artefacts\Release\VST3\Spark.vst3", "build\SparkFX_artefacts\Release\VST3\Spark FX.vst3" "$zip\VST3"
+          Copy-Item "build\Spark_artefacts\Release\Standalone\Spark.exe", "build\SparkFX_artefacts\Release\Standalone\Spark FX.exe" "$zip\Apps"
+          Compress-Archive -Path $zip -DestinationPath "$zip.zip"
+          Remove-Item -Recurse $zip
+          Get-ChildItem dist
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: Spark-windows
+          path: dist/*
+          if-no-files-found: error
+
+      - name: Offline tests (audio, randomiser, wavetables, UI snapshots)
+        run: ./build/SparkTests_artefacts/Release/SparkTests.exe "$PWD/test-output"
+
+      - name: Validate VST3 (pluginval)
+        run: |
+          curl -sSfL -o pluginval.zip https://github.com/Tracktion/pluginval/releases/latest/download/pluginval_Windows.zip
+          unzip -q pluginval.zip
+          for p in "build/Spark_artefacts/Release/VST3/Spark.vst3" "build/SparkFX_artefacts/Release/VST3/Spark FX.vst3"; do
+            ./pluginval.exe --strictness-level 8 --validate-in-process --timeout-ms 300000 "$p"
+          done
+
+      - name: Upload test output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-output-windows
+          path: test-output/*.png
+          if-no-files-found: ignore
+
+  release:
+    needs: [ macos, windows ]
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Version from tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: Spark-*
+          path: dist
+          merge-multiple: true
+
       - name: Publish release
-        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ env.VERSION }}
@@ -120,10 +201,13 @@ jobs:
           target_commitish: ${{ github.sha }}
           make_latest: true
           body: |
-            **Spark** (instrument) and **Spark FX** (effect) for macOS 11+, Apple Silicon and Intel.
+            **Spark** (instrument) and **Spark FX** (effect).
 
-            Download **Spark-${{ env.VERSION }}-macOS.pkg** below. It isn't signed with an Apple Developer ID yet, so right-click it, choose **Open**, then **Open** again.
-            Then in Ableton: Settings → Plug-Ins → turn on VST3 system folders → Rescan.
+            **Mac** (macOS 11+, Apple Silicon and Intel): download **Spark-${{ env.VERSION }}-macOS.pkg**. It isn't signed with an Apple Developer ID yet, so right-click it, choose **Open**, then **Open** again.
 
-            The `-plugins.zip` holds the same VST3, AU and app bundles if you'd rather install them by hand.
+            **Windows** (10 and 11, 64-bit): download **Spark-${{ env.VERSION }}-Windows-Setup.exe**. It isn't code-signed yet, so Windows SmartScreen may show "Windows protected your PC": click **More info**, then **Run anyway**.
+
+            Then in your DAW rescan plug-ins (Ableton: Settings → Plug-Ins → turn on VST3 system folders → Rescan).
+
+            The `-plugins.zip` files hold the same plugins if you'd rather install them by hand.
           files: dist/*

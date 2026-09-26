@@ -193,6 +193,43 @@ juce::String InstrumentProcessor::getSupportedExtensions() const
     return formats.getWildcardForAllFormats();
 }
 
+SourceData::Ptr InstrumentProcessor::makeSource (juce::AudioBuffer<float> audio, double sampleRate, const juce::String& name,
+                                                const juce::File& file, int tableFrameLength)
+{
+    SourceData::Ptr s (new SourceData());
+    s->audio = std::move (audio);
+    s->sampleRate = sampleRate;
+    s->name = name;
+    s->file = file;
+    s->tableFrameLength = tableFrameLength;
+    s->loadedAsWavetable = tableFrameLength > 0;
+    s->table = tableFrameLength > 0 ? Wavetable::fromTableAudio (s->audio, tableFrameLength)
+                                    : Wavetable::fromSample (s->audio);
+    s->computePeaks();
+    return s;
+}
+
+juce::String SourceData::getEmbeddedAudio() const
+{
+    const juce::ScopedLock sl (embedLock);
+    if (embedded.isNotEmpty() || audio.getNumSamples() == 0)
+        return embedded;
+
+    juce::FlacAudioFormat flac;
+    juce::MemoryBlock block;
+    {
+        std::unique_ptr<juce::OutputStream> os (new juce::MemoryOutputStream (block, false));
+        auto writer = flac.createWriterFor (os, juce::AudioFormatWriterOptions()
+                                                    .withSampleRate (juce::jlimit (8000.0, 192000.0, sampleRate))
+                                                    .withNumChannels (audio.getNumChannels())
+                                                    .withBitsPerSample (24));
+        if (writer == nullptr || ! writer->writeFromAudioSampleBuffer (audio, 0, audio.getNumSamples()))
+            return {};
+    } // writer flushes and closes here
+    embedded = block.toBase64Encoding();
+    return embedded;
+}
+
 bool InstrumentProcessor::loadFile (const juce::File& file, juce::String& error)
 {
     std::unique_ptr<juce::AudioFormatReader> reader (formats.createReaderFor (file));
@@ -210,16 +247,10 @@ bool InstrumentProcessor::loadFile (const juce::File& file, juce::String& error)
         return false;
     }
 
-    SourceData::Ptr s (new SourceData());
-    s->sampleRate = reader->sampleRate > 0 ? reader->sampleRate : 44100.0;
-    s->name = file.getFileName();
-    s->file = file;
-    const int channels = (int) juce::jlimit (1u, 2u, reader->numChannels);
-    s->audio.setSize (channels, len);
-    reader->read (&s->audio, 0, len, 0, true, channels > 1);
+    juce::AudioBuffer<float> audio ((int) juce::jlimit (1u, 2u, reader->numChannels), len);
+    reader->read (&audio, 0, len, 0, true, audio.getNumChannels() > 1);
 
-    const float mag = s->audio.getMagnitude (0, len);
-    if (mag < 1.0e-5f)
+    if (audio.getMagnitude (0, len) < 1.0e-5f)
     {
         error = file.getFileName() + " is silent.";
         return false;
@@ -230,17 +261,8 @@ bool InstrumentProcessor::loadFile (const juce::File& file, juce::String& error)
     const bool looksLikeTable = clmFrame > 0
         || (len % Wavetable::frameSize == 0 && len / Wavetable::frameSize >= 2 && len / Wavetable::frameSize <= Wavetable::maxFrames);
 
-    if (looksLikeTable)
-    {
-        s->table = Wavetable::fromTableAudio (s->audio, clmFrame > 0 ? clmFrame : Wavetable::frameSize);
-        s->loadedAsWavetable = true;
-    }
-    else
-    {
-        s->table = Wavetable::fromSample (s->audio);
-    }
-    s->computePeaks();
-
+    auto s = makeSource (std::move (audio), reader->sampleRate > 0 ? reader->sampleRate : 44100.0, file.getFileName(), file,
+                         looksLikeTable ? (clmFrame > 0 ? clmFrame : Wavetable::frameSize) : 0);
     installSource (s);
     setParam ("mode", looksLikeTable ? 1.0f : 0.0f);
     return true;
@@ -383,24 +405,48 @@ juce::AudioProcessorEditor* InstrumentProcessor::createEditor()
 
 void InstrumentProcessor::writeExtraState (juce::ValueTree& extra)
 {
-    if (auto s = getSource(); s != nullptr && s->file != juce::File())
-        extra.setProperty ("sourceFile", s->file.getFullPathName(), nullptr);
+    auto s = getSource();
+    if (s == nullptr || s->name == "Spark Init")
+        return;
+
+    extra.setProperty ("sourceName", s->name, nullptr);
+    extra.setProperty ("sourceFile", s->file.getFullPathName(), nullptr);
+    extra.setProperty ("tableFrame", s->tableFrameLength, nullptr);
+    // The sound itself travels with the project (lossless FLAC), so sessions open on any computer.
+    extra.setProperty ("sourceAudio", s->getEmbeddedAudio(), nullptr);
 }
 
 void InstrumentProcessor::readExtraState (const juce::ValueTree& extra)
 {
-    const auto path = extra.getProperty ("sourceFile").toString();
-    if (path.isEmpty())
-        return;
-    const juce::File f (path);
-    if (! f.existsAsFile())
-        return;
+    const auto embedded = extra.getProperty ("sourceAudio").toString();
+    const juce::File file (extra.getProperty ("sourceFile").toString());
 
-    // Loading resets Engine to what the file suggests; keep the saved choice instead.
-    const float savedMode = apvts.getParameter ("mode")->getValue();
-    juce::String error;
-    if (loadFile (f, error))
-        setParam ("mode", savedMode);
+    if (embedded.isNotEmpty())
+    {
+        juce::MemoryBlock block;
+        if (block.fromBase64Encoding (embedded))
+        {
+            juce::FlacAudioFormat flac;
+            std::unique_ptr<juce::AudioFormatReader> reader (
+                flac.createReaderFor (new juce::MemoryInputStream (block, false), true));
+            if (reader != nullptr && reader->lengthInSamples > 0)
+            {
+                juce::AudioBuffer<float> audio ((int) juce::jlimit (1u, 2u, reader->numChannels), (int) reader->lengthInSamples);
+                reader->read (&audio, 0, audio.getNumSamples(), 0, true, audio.getNumChannels() > 1);
+                auto s = makeSource (std::move (audio), reader->sampleRate, extra.getProperty ("sourceName").toString(),
+                                     file, (int) extra.getProperty ("tableFrame", 0));
+                installSource (s);
+                return;
+            }
+        }
+    }
+
+    // Older projects only stored the file path
+    if (file.existsAsFile())
+    {
+        juce::String error;
+        loadFile (file, error); // the saved Engine choice is restored with the parameters afterwards
+    }
 }
 } // namespace spark
 

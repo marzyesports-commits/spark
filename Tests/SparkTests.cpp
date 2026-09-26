@@ -350,6 +350,65 @@ int main (int argc, char** argv)
         check (mip >= 4, "High notes use a band-limited mip (" + juce::String (mip) + ")");
     }
 
+    // ---------------------------------------------------------------- projects carry their sound
+    std::cout << "Projects: the sample is saved inside the project" << std::endl;
+    {
+        // a distinctive 3.5 s stereo sample on disk
+        juce::AudioBuffer<float> tone (2, (int) (3.5 * 44100));
+        for (int i = 0; i < tone.getNumSamples(); ++i)
+        {
+            tone.setSample (0, i, 0.4f * std::sin (juce::MathConstants<float>::twoPi * 330.0f * (float) i / 44100.0f));
+            tone.setSample (1, i, 0.3f * std::sin (juce::MathConstants<float>::twoPi * 495.0f * (float) i / 44100.0f));
+        }
+        auto file = outDir.getChildFile ("embed-me.wav");
+        writeWav (file, tone, 44100.0);
+
+        InstrumentProcessor p;
+        juce::String error;
+        p.loadFile (file, error);
+        juce::MemoryBlock state;
+        p.getStateInformation (state);
+        file.deleteFile(); // the original is gone, as if the project moved to another computer
+
+        InstrumentProcessor q;
+        q.prepareToPlay (sr, 512);
+        q.setStateInformation (state.getData(), (int) state.getSize());
+        auto s = q.getSource();
+        bool same = s != nullptr && s->audio.getNumChannels() == 2 && s->audio.getNumSamples() == tone.getNumSamples() && s->sampleRate == 44100.0;
+        float maxErr = 0;
+        if (same)
+            for (int c = 0; c < 2; ++c)
+                for (int i = 0; i < tone.getNumSamples(); ++i)
+                    maxErr = juce::jmax (maxErr, std::abs (s->audio.getSample (c, i) - tone.getSample (c, i)));
+        check (same && s->name == "embed-me.wav", "Sample restored without the original file (" + juce::String (state.getSize() / 1024) + " KB project state)");
+        check (maxErr < 1.0e-4f, "Restored audio is lossless (max error " + juce::String (maxErr, 7) + ")");
+        auto audio = renderNotes (q, sr, { 60 }, 0.5, 0.3);
+        check (stats (audio, 0, audio.getNumSamples()).rms > 0.01f, "Restored project plays its sound");
+
+        // a wavetable stays a wavetable
+        auto tableFile = outDir.getChildFile ("embed-table.wav");
+        std::vector<std::vector<float>> frames (16, std::vector<float> (2048));
+        for (int f = 0; f < 16; ++f)
+            for (int i = 0; i < 2048; ++i)
+                frames[(size_t) f][(size_t) i] = std::sin (juce::MathConstants<float>::twoPi * (float) i / 2048.0f * (float) (1 + f));
+        Wavetable::writeWav (tableFile, frames);
+        InstrumentProcessor t;
+        t.loadFile (tableFile, error);
+        juce::MemoryBlock tstate;
+        t.getStateInformation (tstate);
+        tableFile.deleteFile();
+        InstrumentProcessor u;
+        u.setStateInformation (tstate.getData(), (int) tstate.getSize());
+        check (u.getSource()->loadedAsWavetable && u.getSource()->table->getNumFrames() == 16 && u.getMode() == InstrumentProcessor::tableMode,
+               "Wavetables restore as wavetables (16 frames, Table mode)");
+
+        // the built-in sound adds nothing to the project
+        InstrumentProcessor fresh;
+        juce::MemoryBlock small;
+        fresh.getStateInformation (small);
+        check (small.getSize() < 40000, "Projects using the built-in sound stay small (" + juce::String (small.getSize() / 1024) + " KB)");
+    }
+
     // ---------------------------------------------------------------- effect
     std::cout << "Spark FX: processes live audio" << std::endl;
     {

@@ -353,7 +353,7 @@ int Wavetable::readClmFrameSize (const juce::File& file)
         if (juce::String (tag) == "clm " && size < 1024)
         {
             juce::MemoryBlock mb;
-            in.readIntoMemoryBlock (mb, (ssize_t) size);
+            in.readIntoMemoryBlock (mb, (int) size);
             const auto text = mb.toString();
             if (text.startsWith ("<!>"))
             {

@@ -9,7 +9,7 @@ It comes as two plugins built from one codebase:
 | **Spark** | Instrument (MIDI in) | Plays a dropped sample as grains or as a wavetable sliced from it |
 | **Spark FX** | Audio effect | Live granular resynthesis of a track, with tempo-synced stutter |
 
-Formats: **VST3**, **Audio Unit** and **standalone app** on macOS (universal: Apple Silicon and Intel, macOS 11+). VST3 and standalone also build on Windows and Linux.
+Formats: **VST3**, **Audio Unit** and **standalone app** on macOS (universal: Apple Silicon and Intel, macOS 11+), and **VST3** and **standalone app** on Windows 10/11 (64-bit).
 
 ## Presets
 
@@ -57,6 +57,16 @@ Spark ships with **103 instrument presets** and **75 effect presets**, sorted in
 2. The installer isn't signed with an Apple Developer ID yet, so macOS will block a normal double-click. **Right-click the .pkg → Open → Open**, or go to System Settings → Privacy & Security and click **Open Anyway**.
 3. In Ableton Live, open Settings → Plug-Ins, turn on **Use VST3 Plug-in System Folders** (and **Use Audio Units** if you want the AU), then click **Rescan**.
 
+## Installing on Windows
+
+1. Download `Spark-<version>-Windows-Setup.exe` from Releases.
+2. The installer isn't code-signed yet, so SmartScreen may say "Windows protected your PC". Click **More info**, then **Run anyway**.
+3. The plugins install to `C:\Program Files\Common Files\VST3`. Rescan plug-ins in your DAW. In Ableton Live, go to Settings → Plug-Ins, turn on **Use VST3 Plug-in System Folders**, then click **Rescan**.
+
+## Projects keep their sound
+
+When you save a project, Spark stores the sample you dropped in *inside the project*, as lossless FLAC. Sessions open with the right sound on any computer, even if the original file has moved or been deleted. Samples are capped at 60 seconds. Projects that use the built-in sound stay tiny.
+
 ## Building from source
 
 Requirements: CMake 3.22+, a C++20 compiler (Xcode 15+ on macOS). JUCE 8.0.10 is downloaded automatically.
@@ -71,7 +81,7 @@ Tests: configure with `-DSPARK_BUILD_TESTS=ON`, build `SparkTests` and run it. I
 
 ### Continuous builds
 
-`.github/workflows/build-macos.yml` builds on every push to `main`. Each run:
+`.github/workflows/build.yml` builds Mac and Windows on every push to `main`. Each run:
 
 1. Builds universal binaries.
 2. Packages the installer and a plain zip of the plugins.

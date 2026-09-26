@@ -20,8 +20,16 @@ struct SourceData : public juce::ReferenceCountedObject
     Wavetable::Ptr table;
     bool loadedAsWavetable = false;
     std::vector<float> peaks;         // 0..1 envelope for drawing, 256 bins
+    int tableFrameLength = 0;         // >0 when the file was a wavetable (its frame size)
 
     void computePeaks();
+
+    // Lossless copy for saving inside the project, encoded once and reused.
+    juce::String getEmbeddedAudio() const;
+
+private:
+    mutable juce::CriticalSection embedLock;
+    mutable juce::String embedded;
 };
 
 class InstrumentProcessor : public SparkProcessorBase,
@@ -96,6 +104,8 @@ protected:
 private:
     void timerCallback() override;
     void installSource (SourceData::Ptr);
+    static SourceData::Ptr makeSource (juce::AudioBuffer<float> audio, double sampleRate, const juce::String& name,
+                                       const juce::File& file, int tableFrameLength);
     static SourceData::Ptr makeBuiltInSource();
 
     juce::AudioFormatManager formats;
