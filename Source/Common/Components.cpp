@@ -307,11 +307,14 @@ CoreView::CoreView (SparkProcessorBase& p) : processor (p)
     addAndMakeVisible (sparkButton);
     sparkButton.setMouseCursor (juce::MouseCursor::PointingHandCursor);
     sparkButton.setTooltip ("Roll a new variation. Locked facets stay put.");
-    sparkButton.onClick = [this] { processor.spark(); };
+    sparkButton.onClick = [this] { processor.spark(); burst(); };
     processor.addChangeListener (this);
     processor.getCoreShape (target, ringPoints);
     shown = target;
-    startTimerHz (30);
+    for (int i = 0; i < numFacets; ++i)
+        lastFacet[(size_t) i] = processor.facetParam (i).getValue();
+    lastTick = juce::Time::getMillisecondCounterHiRes();
+    startTimerHz (60);
 }
 
 CoreView::~CoreView() { processor.removeChangeListener (this); }
@@ -331,13 +334,254 @@ void CoreView::changeListenerCallback (juce::ChangeBroadcaster*)
 
 void CoreView::timerCallback()
 {
+    const double now = juce::Time::getMillisecondCounterHiRes();
+    const float dt = (float) juce::jlimit (0.001, 0.1, (now - lastTick) * 0.001);
+    lastTick = now;
+
+    // Facet movement (from the arcs, the facet list, automation or a Spark) feeds the storm
+    int jumped = 0;
+    for (int i = 0; i < numFacets; ++i)
+    {
+        const float v = processor.facetParam (i).getValue();
+        const float delta = std::abs (v - lastFacet[(size_t) i]);
+        if (delta > 1.0e-4f)
+        {
+            const auto tip = facetTip (i, v);
+            const auto outward = (tip - centre) / juce::jmax (1.0f, tip.getDistanceFrom (centre));
+            spawnSparks (tip, outward, juce::jlimit (1, 5, (int) (delta * 200.0f) + 1), 170.0f + delta * 1600.0f, 1.2f);
+            travel[(size_t) i] += delta;
+            glow = juce::jmin (0.6f, glow + delta * 1.2f);   // a burst goes to full glow; dragging stays gentler
+            if (delta > 0.05f) ++jumped;
+            // a bolt for every bit of travel, but not more than ~8 a second per facet
+            if (travel[(size_t) i] > 0.035f && now - lastBoltTime[(size_t) i] > 120.0)
+            {
+                const float toCore = storm.nextFloat();
+                const float ang = std::atan2 (tip.x - centre.x, centre.y - tip.y) + (storm.nextFloat() - 0.5f) * 0.7f;
+                const float r = toCore < 0.55f ? 70.0f : 112.0f + storm.nextFloat() * 20.0f;
+                spawnBolt (tip, { centre.x + r * std::sin (ang), centre.y - r * std::cos (ang) }, juce::jmin (1.0f, 0.85f + travel[(size_t) i] * 3.0f));
+                travel[(size_t) i] = 0.0f;
+                lastBoltTime[(size_t) i] = now;
+            }
+            lastFacet[(size_t) i] = v;
+        }
+        else
+        {
+            travel[(size_t) i] *= 0.9f;
+        }
+    }
+    if (jumped >= 3 && dragging < 0)
+        burst();   // many facets jumped at once: Breed, a lineage recall or a preset
+
+    stepStorm (dt);
+    glow *= std::exp (-dt * 2.8f);
+
     processor.getCoreShape (target, ringPoints);
     if (shown.size() != target.size())
         shown = target;
+    const float follow = 1.0f - std::pow (0.7f, dt * 30.0f);
+    float moving = 0.0f;
     for (size_t i = 0; i < shown.size(); ++i)
-        shown[i] += (target[i] - shown[i]) * 0.3f;
-    ghostAlpha = juce::jmax (0.14f, ghostAlpha * 0.97f);
-    repaint();
+    {
+        const float d = target[i] - shown[i];
+        shown[i] += d * follow;
+        moving = juce::jmax (moving, std::abs (d));
+    }
+    ghostAlpha = juce::jmax (0.14f, ghostAlpha * std::pow (0.97f, dt * 30.0f));
+
+    // Nothing moving: skip the repaint entirely (the ring is still unless Motion is up)
+    const bool idle = moving < 1.0e-4f && ! stormActive() && glow < 0.004f && ghostAlpha <= 0.1401f;
+    if (! idle || ! wasIdle)
+        repaint();
+    wasIdle = idle;
+}
+
+// ---- Storm --------------------------------------------------------------------------
+juce::Point<float> CoreView::facetTip (int facet, float value) const
+{
+    const float arcR = 186.0f;
+    const float c = juce::degreesToRadians ((float) facet * 45.0f);
+    const float a = c - juce::degreesToRadians (19.0f) + juce::degreesToRadians (38.0f) * juce::jlimit (0.0f, 1.0f, value);
+    return { centre.x + arcR * std::sin (a), centre.y - arcR * std::cos (a) };
+}
+
+bool CoreView::stormActive() const
+{
+    for (const auto& p : particles) if (p.life > 0.0f) return true;
+    for (const auto& b : bolts) if (b.life > 0.0f) return true;
+    return false;
+}
+
+void CoreView::spawnSparks (juce::Point<float> at, juce::Point<float> outward, int count, float speed, float spread)
+{
+    for (int k = 0; k < count; ++k)
+    {
+        Particle* slot = nullptr;
+        for (auto& p : particles) if (p.life <= 0.0f) { slot = &p; break; }
+        if (slot == nullptr)
+        {
+            slot = &particles[0];   // pool full: recycle the oldest-looking one
+            for (auto& p : particles) if (p.life < slot->life) slot = &p;
+        }
+        // mostly inward (into the core) with some scatter; a few fly outward
+        const float dir = storm.nextFloat() < 0.75f ? -1.0f : 1.0f;
+        const float ang = (storm.nextFloat() - 0.5f) * spread;
+        const juce::Point<float> d (outward.x * std::cos (ang) - outward.y * std::sin (ang),
+                                    outward.x * std::sin (ang) + outward.y * std::cos (ang));
+        const float v = speed * (0.45f + storm.nextFloat() * 0.9f);
+        slot->pos = at;
+        slot->vel = d * (dir * v);
+        slot->maxLife = slot->life = 0.3f + storm.nextFloat() * 0.45f;
+        slot->size = 0.8f + storm.nextFloat() * 1.0f;
+        slot->hot = storm.nextFloat() < 0.35f;
+    }
+}
+
+void CoreView::shapeBolt (Bolt& b)
+{
+    // midpoint displacement: 16 segments, jagged near the middle, pinned at both ends
+    constexpr int n = Bolt::mainPoints - 1;
+    b.pts[0] = b.from;
+    b.pts[n] = b.to;
+    const float len = b.from.getDistanceFrom (b.to);
+    for (int step = n; step > 1; step /= 2)
+    {
+        const float amount = len * 0.2f * (float) step / (float) n;
+        for (int i = step / 2; i < n; i += step)
+        {
+            const auto a = b.pts[i - step / 2], c = b.pts[i + step / 2];
+            auto mid = (a + c) * 0.5f;
+            const auto dir = c - a;
+            const float dl = juce::jmax (1.0e-3f, std::hypot (dir.x, dir.y));
+            const juce::Point<float> normal (-dir.y / dl, dir.x / dl);
+            b.pts[i] = mid + normal * ((storm.nextFloat() - 0.5f) * 2.0f * amount);
+        }
+    }
+    b.hasBranch = storm.nextFloat() < 0.7f;
+    if (b.hasBranch)
+    {
+        const int at = 4 + storm.nextInt (8);
+        const auto start = b.pts[at];
+        const auto dir = b.to - b.from;
+        const float turn = (storm.nextBool() ? 1.0f : -1.0f) * (0.35f + storm.nextFloat() * 0.5f);
+        const juce::Point<float> bd (dir.x * std::cos (turn) - dir.y * std::sin (turn), dir.x * std::sin (turn) + dir.y * std::cos (turn));
+        const auto end = start + bd * (0.25f + storm.nextFloat() * 0.2f);
+        for (int i = 0; i < Bolt::branchPoints; ++i)
+        {
+            const float t = (float) i / (float) (Bolt::branchPoints - 1);
+            const juce::Point<float> jitter ((storm.nextFloat() - 0.5f) * 9.0f, (storm.nextFloat() - 0.5f) * 9.0f);
+            b.branch[i] = start + (end - start) * t + (i == 0 ? juce::Point<float>() : jitter * (1.0f - t * 0.4f));
+        }
+    }
+}
+
+void CoreView::spawnBolt (juce::Point<float> from, juce::Point<float> to, float strength)
+{
+    Bolt* slot = &bolts[0];
+    for (auto& b : bolts) if (b.life < slot->life) slot = &b;
+    slot->from = from;
+    slot->to = to;
+    slot->strength = strength;
+    slot->maxLife = slot->life = 0.2f + storm.nextFloat() * 0.14f;
+    slot->nextReshape = slot->life - 0.05f;
+    shapeBolt (*slot);
+    // a flash of sparks where it lands
+    const auto d = (to - centre) / juce::jmax (1.0f, to.getDistanceFrom (centre));
+    spawnSparks (to, d, 4, 140.0f, 2.4f);
+}
+
+void CoreView::burst()
+{    const double now = juce::Time::getMillisecondCounterHiRes();
+    if (now - lastBurst < 350.0)
+        return;   // the button press and the facet jump it causes are one event
+    lastBurst = now;
+
+    // The core discharges: bolts out to the ring and a ring of sparks off the button
+    const float base = storm.nextFloat() * juce::MathConstants<float>::twoPi;
+    for (int k = 0; k < 5; ++k)
+    {
+        const float ang = base + (float) k * juce::MathConstants<float>::twoPi / 5.0f + (storm.nextFloat() - 0.5f) * 0.6f;
+        const juce::Point<float> dir (std::sin (ang), -std::cos (ang));
+        spawnBolt (centre + dir * 70.0f, centre + dir * (125.0f + storm.nextFloat() * 45.0f), 1.0f);
+    }
+    for (int k = 0; k < 36; ++k)
+    {
+        const float ang = storm.nextFloat() * juce::MathConstants<float>::twoPi;
+        const juce::Point<float> dir (std::sin (ang), -std::cos (ang));
+        Particle* slot = nullptr;
+        for (auto& p : particles) if (p.life <= 0.0f) { slot = &p; break; }
+        if (slot == nullptr) break;
+        slot->pos = centre + dir * 72.0f;
+        slot->vel = dir * (140.0f + storm.nextFloat() * 260.0f);
+        slot->maxLife = slot->life = 0.35f + storm.nextFloat() * 0.5f;
+        slot->size = 0.9f + storm.nextFloat();
+        slot->hot = storm.nextFloat() < 0.5f;
+    }
+    glow = 1.0f;
+}
+
+void CoreView::stepStorm (float dt)
+{
+    const float drag = std::exp (-dt * 3.2f);
+    for (auto& p : particles)
+    {
+        if (p.life <= 0.0f) continue;
+        p.pos += p.vel * dt;
+        p.vel *= drag;
+        p.life -= dt;
+        // sparks that reach the button are absorbed
+        if (p.pos.getDistanceFrom (centre) < 66.0f) p.life = 0.0f;
+    }
+    for (auto& b : bolts)
+    {
+        if (b.life <= 0.0f) continue;
+        b.life -= dt;
+        if (b.life > 0.0f && b.life < b.nextReshape)
+        {
+            shapeBolt (b);                 // flicker: same ends, new path
+            b.nextReshape = b.life - 0.06f;
+        }
+    }
+}
+
+void CoreView::paintStorm (juce::Graphics& g)
+{
+    using namespace colours;
+    const juce::Colour white (0xfffffbf0);
+
+    for (const auto& b : bolts)
+    {
+        if (b.life <= 0.0f) continue;
+        const float t = b.life / b.maxLife;
+        const float a = b.strength * std::sqrt (t) * (0.8f + 0.2f * storm.nextFloat());   // bright, then fades; slight flicker
+        juce::Path path;
+        path.startNewSubPath (b.pts[0]);
+        for (int i = 1; i < Bolt::mainPoints; ++i) path.lineTo (b.pts[i]);
+        if (b.hasBranch)
+        {
+            path.startNewSubPath (b.branch[0]);
+            for (int i = 1; i < Bolt::branchPoints; ++i) path.lineTo (b.branch[i]);
+        }
+        // glow from layered strokes (no blur: cheap)
+        g.setColour (gold.withAlpha (0.10f * a));
+        g.strokePath (path, juce::PathStrokeType (9.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        g.setColour (gold.withAlpha (0.30f * a));
+        g.strokePath (path, juce::PathStrokeType (4.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        g.setColour (white.withAlpha (0.95f * a));
+        g.strokePath (path, juce::PathStrokeType (1.4f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        // flash at the source
+        g.setColour (goldHi.withAlpha (0.35f * a));
+        g.fillEllipse (juce::Rectangle<float> (10.0f, 10.0f).withCentre (b.from));
+    }
+
+    for (const auto& p : particles)
+    {
+        if (p.life <= 0.0f) continue;
+        const float t = p.life / p.maxLife;
+        const float a = t * t;
+        const auto tail = p.pos - p.vel * 0.05f;
+        g.setColour ((p.hot ? white : goldHi).withAlpha (a));
+        g.drawLine ({ tail, p.pos }, p.size * (0.8f + 0.9f * t));
+    }
 }
 
 juce::Path CoreView::ringPath (const std::vector<float>& shape, float radius, float amp) const
@@ -368,8 +612,16 @@ void CoreView::paint (juce::Graphics& g)
         g.setColour (text.withAlpha (ghostAlpha * 0.35f));
         g.strokePath (ringPath (ghost, 105.0f, 32.0f), juce::PathStrokeType (1.0f));
     }
-    g.setColour (gold);
-    g.strokePath (ringPath (shown, 105.0f, 32.0f), juce::PathStrokeType (2.2f, juce::PathStrokeType::curved));
+    const auto ring = ringPath (shown, 105.0f, 32.0f);
+    if (glow > 0.01f)
+    {
+        g.setColour (gold.withAlpha (0.16f * glow));
+        g.strokePath (ring, juce::PathStrokeType (10.0f, juce::PathStrokeType::curved));
+        g.setColour (goldHi.withAlpha (0.35f * glow));
+        g.strokePath (ring, juce::PathStrokeType (4.0f, juce::PathStrokeType::curved));
+    }
+    g.setColour (gold.interpolatedWith (goldHi, glow));
+    g.strokePath (ring, juce::PathStrokeType (2.2f + glow * 0.8f, juce::PathStrokeType::curved));
 
     const auto& facets = processor.getFacets();
     for (int i = 0; i < numFacets; ++i)
@@ -412,6 +664,8 @@ void CoreView::paint (juce::Graphics& g)
             g.strokePath (makeLockPath (lockArea, true), juce::PathStrokeType (1.3f));
         }
     }
+
+    paintStorm (g);
 }
 
 int CoreView::facetAt (juce::Point<float> p) const

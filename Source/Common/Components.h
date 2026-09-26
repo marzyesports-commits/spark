@@ -101,6 +101,39 @@ private:
     juce::Path ringPath (const std::vector<float>& shape, float radius, float amp) const;
     void updateTooltip();
 
+    // ---- Storm: sparks and lightning when facets move. Fixed pools, no allocation, idle = no repaints.
+    struct Particle
+    {
+        juce::Point<float> pos, vel;
+        float life = 0.0f, maxLife = 1.0f, size = 1.0f;
+        bool hot = false;
+    };
+    struct Bolt
+    {
+        static constexpr int mainPoints = 17, branchPoints = 9;
+        juce::Point<float> from, to, pts[mainPoints], branch[branchPoints];
+        float life = 0.0f, maxLife = 0.2f, nextReshape = 0.0f, strength = 1.0f;
+        bool hasBranch = false;
+    };
+    juce::Point<float> facetTip (int facet, float value) const;
+    void spawnSparks (juce::Point<float> at, juce::Point<float> outward, int count, float speed, float spread);
+    void spawnBolt (juce::Point<float> from, juce::Point<float> to, float strength);
+    void shapeBolt (Bolt&);
+    void burst();
+    void stepStorm (float dt);
+    void paintStorm (juce::Graphics&);
+    bool stormActive() const;
+
+    std::array<Particle, 120> particles;
+    std::array<Bolt, 8> bolts;
+    std::array<float, numFacets> lastFacet {};
+    std::array<float, numFacets> travel {};     // movement since the last bolt, per facet
+    std::array<double, numFacets> lastBoltTime {};
+    juce::Random storm;
+    float glow = 0.0f;
+    double lastTick = 0.0, lastBurst = 0.0;
+    bool wasIdle = false;
+
     SparkProcessorBase& processor;
     SparkButton sparkButton;
     std::vector<float> target, shown, ghost;

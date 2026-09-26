@@ -104,6 +104,46 @@ int main (int argc, char** argv)
     juce::ScopedJuceInitialiser_GUI gui;
     const juce::File outDir = argc > 1 ? juce::File (argv[1]) : juce::File::getCurrentWorkingDirectory().getChildFile ("test-output");
     outDir.createDirectory();
+
+    // Optional: record the core's sparks and lightning as frames (SPARK_STORM_PREVIEW=1), and time the painting.
+    if (juce::SystemStats::getEnvironmentVariable ("SPARK_STORM_PREVIEW", {}).isNotEmpty())
+    {
+        InstrumentProcessor p;
+        p.prepareToPlay (48000.0, 512);
+        std::unique_ptr<juce::AudioProcessorEditor> ed (p.createEditor());
+        ed->setSize (1120, 720);
+        std::function<CoreView* (juce::Component*)> findCore = [&] (juce::Component* c) -> CoreView*
+        {
+            if (auto* cv = dynamic_cast<CoreView*> (c)) return cv;
+            for (auto* ch : c->getChildren()) if (auto* f = findCore (ch)) return f;
+            return nullptr;
+        };
+        auto* core = findCore (ed.get());
+        juce::Button* sparkButton = nullptr;
+        for (auto* ch : core->getChildren()) if (auto* b = dynamic_cast<juce::Button*> (ch)) sparkButton = b;
+        auto frames = outDir.getChildFile ("storm");
+        frames.deleteRecursively();
+        frames.createDirectory();
+        auto& tone = p.facetParam (InstrumentProcessor::tone);
+        auto& morphP = p.facetParam (InstrumentProcessor::morph);
+        double paintMs = 0; int painted = 0;
+        const int total = 60 * 5;
+        for (int f = 0; f < total; ++f)
+        {
+            const double t = f / 60.0;
+            if (t > 0.3 && t < 1.6) tone.setValueNotifyingHost (0.55f + 0.3f * (float) std::sin ((t - 0.3) * 4.0));
+            if (std::abs (t - 2.0) < 0.5 / 60.0 && sparkButton != nullptr) sparkButton->triggerClick();
+            if (t > 3.0 && t < 4.2) morphP.setValueNotifyingHost (0.2f + 0.6f * (float) ((t - 3.0) / 1.2));
+            juce::MessageManager::getInstance()->runDispatchLoopUntil (16);
+            const double t0 = juce::Time::getMillisecondCounterHiRes();
+            auto img = ed->createComponentSnapshot (ed->getLocalArea (core, core->getLocalBounds()), true, 1.5f);
+            paintMs += juce::Time::getMillisecondCounterHiRes() - t0; ++painted;
+            juce::FileOutputStream os (frames.getChildFile (juce::String::formatted ("f%04d.png", f)));
+            juce::PNGImageFormat().writeImageToStream (img, os);
+        }
+        std::cout << "Core paint: " << juce::String (paintMs / painted, 2) << " ms per frame at 1.5x (software renderer)" << std::endl;
+        return 0;
+    }
     const double sr = 48000.0;
 
     // ---------------------------------------------------------------- instrument audio
