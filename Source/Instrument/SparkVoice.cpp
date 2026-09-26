@@ -87,6 +87,8 @@ void SparkVoice::startNote (int midiNote, float vel, juce::SynthesiserSound*, in
         lfoNext[l] = random.nextFloat() * 2.0f - 1.0f;
     }
     volumeNow = -1.0f;   // set on the first chunk
+    subPhase = 0.0;
+    noiseLp[0] = noiseLp[1] = 0.0f;
 
     filter.reset();
     driveAmount = processor.params.facet[InstrumentProcessor::drive]->load();
@@ -211,6 +213,41 @@ void SparkVoice::computeModulation (int blockOffset, int n, float (&offsets)[mod
     src[mod::aftertouch] = ms.aftertouch;
     src[mod::velocity] = velocity;
     ms.route (src, offsets);
+}
+
+void SparkVoice::addLayers (float* l, float* r, int n, double baseHz)
+{
+    auto& p = processor.params;
+    const float sub = p.subLevel->load(), noise = p.noiseLevel->load();
+    if (sub > 1.0e-4f)
+    {
+        const double inc = baseHz / (p.subOctave->load() > 0.5f ? 4.0 : 2.0) / getSampleRate();
+        const float g = sub * 0.55f;
+        for (int i = 0; i < n; ++i)
+        {
+            const float v = g * std::sin ((float) (subPhase * juce::MathConstants<double>::twoPi));
+            l[i] += v;
+            r[i] += v;
+            subPhase += inc;
+            if (subPhase >= 1.0) subPhase -= 1.0;
+        }
+    }
+    if (noise > 1.0e-4f)
+    {
+        // colour: a one-pole low-pass from ~200 Hz (dark) up to fully white (bright), level-matched
+        const float colour = p.noiseColour->load();
+        const float hz = 200.0f * std::exp2 (colour * 7.5f);
+        const float a = colour > 0.97f ? 1.0f : 1.0f - std::exp (-juce::MathConstants<float>::twoPi * juce::jmin (hz, 20000.0f) / (float) getSampleRate());
+        const float makeup = juce::jmin (6.0f, std::sqrt ((2.0f - a) / a));   // a one-pole passes a/(2-a) of white noise's power
+        const float g = noise * 0.3f * makeup;
+        for (int i = 0; i < n; ++i)
+        {
+            noiseLp[0] += a * ((random.nextFloat() * 2.0f - 1.0f) - noiseLp[0]);
+            noiseLp[1] += a * ((random.nextFloat() * 2.0f - 1.0f) - noiseLp[1]);
+            l[i] += noiseLp[0] * g;
+            r[i] += noiseLp[1] * g;
+        }
+    }
 }
 
 void SparkVoice::pitchWheelMoved (int value)
@@ -400,6 +437,7 @@ void SparkVoice::renderNextBlock (juce::AudioBuffer<float>& out, int startSample
             renderGrains (l, r, n, *source, ratio, position, grainSec, motion, scan);
         }
 
+        addLayers (l, r, n, baseHz);
         processChain (l, r, n, value (mod::tone), value (mod::drive), value (mod::resonance), volumeNow, volume);
         volumeNow = volume;
 

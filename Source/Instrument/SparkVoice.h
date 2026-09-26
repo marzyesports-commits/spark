@@ -109,6 +109,10 @@ private:
     double lfoVoicePhase[mod::numLfos] {};
     float lfoHeld[mod::numLfos] {}, lfoNext[mod::numLfos] {};
     float volumeNow = 1.0f;
+    // layers
+    double subPhase = 0.0;
+    float noiseLp[2] {};
+    void addLayers (float* l, float* r, int n, double baseHz);
 
     juce::AudioBuffer<float> scratch;
 };

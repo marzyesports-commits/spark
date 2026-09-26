@@ -155,7 +155,7 @@ void SynthCard::paint (juce::Graphics& g)
 
 // =====================================================================================
 FilterCard::FilterCard (InstrumentProcessor& p, ModDropHandler onDrop)
-    : SynthCard ("FILTER", "Cutoff is the Tone facet"),
+    : SynthCard ("FILTER", {}),
       type (*p.apvts.getParameter ("filterType"), { "LOW", "HIGH", "BAND", "NOTCH" },
             { "Low-pass: keeps the lows, darkens as you close it",
               "High-pass: removes the lows, thins the sound out",
@@ -171,6 +171,19 @@ FilterCard::FilterCard (InstrumentProcessor& p, ModDropHandler onDrop)
     cutoff.onModDrop = res.onModDrop = onDrop;
     addKnob (*p.apvts.getParameter ("keyTrack"), "KEY", "Key tracking: higher notes open the filter more. 100% follows the keyboard exactly");
     addKnob (*p.apvts.getParameter ("toneAmount"), "ENV", "How far the Tone envelope sweeps the cutoff, in octaves (edit its shape on the SOUND page)");
+}
+
+// =====================================================================================
+LayersCard::LayersCard (InstrumentProcessor& p)
+    : SynthCard ("LAYERS", {}),
+      octave (*p.apvts.getParameter ("subOctave"), { "SUB -1 OCT", "SUB -2 OCT" },
+              { "The sub plays one octave below each note", "The sub plays two octaves below each note" })
+{
+    segments = &octave;
+    addAndMakeVisible (octave);
+    addKnob (*p.apvts.getParameter ("subLevel"), "SUB", "A clean sine under every note, for weight. Goes through the filter and envelope with the rest");
+    addKnob (*p.apvts.getParameter ("noiseLevel"), "NOISE", "Noise layer for breath, air and grit. Goes through the filter and envelope with the rest");
+    addKnob (*p.apvts.getParameter ("noiseColour"), "COLOUR", "Noise colour: dark rumble to bright hiss");
 }
 
 // =====================================================================================
@@ -535,9 +548,9 @@ void MatrixCard::paint (juce::Graphics& g)
 
 // =====================================================================================
 SynthPage::SynthPage (InstrumentProcessor& p, ModDropHandler onModDrop)
-    : filter (p, onModDrop), play (p), macros (p), lfo1 (p, 0), lfo2 (p, 1), matrix (p)
+    : filter (p, onModDrop), layers (p), play (p), macros (p), lfo1 (p, 0), lfo2 (p, 1), matrix (p)
 {
-    for (auto* c : std::initializer_list<juce::Component*> { &filter, &play, &macros, &lfo1, &lfo2, &matrix })
+    for (auto* c : std::initializer_list<juce::Component*> { &filter, &layers, &play, &macros, &lfo1, &lfo2, &matrix })
         addAndMakeVisible (c);
 }
 
@@ -547,8 +560,9 @@ void SynthPage::resized()
     const int w = (getWidth() - 32 - 3 * gap) / 4;
     const int h = (getHeight() - top - 16 - gap) / 2;
     const int y2 = top + h + gap;
-    filter.setBounds (16, top, 2 * w + gap, h);
-    play.setBounds (filter.getRight() + gap, top, w, h);
+    filter.setBounds (16, top, w, h);
+    layers.setBounds (filter.getRight() + gap, top, w, h);
+    play.setBounds (layers.getRight() + gap, top, w, h);
     macros.setBounds (play.getRight() + gap, top, w, h);
     lfo1.setBounds (16, y2, w, h);
     lfo2.setBounds (lfo1.getRight() + gap, y2, w, h);

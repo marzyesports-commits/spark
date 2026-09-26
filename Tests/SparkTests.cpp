@@ -130,6 +130,16 @@ float lowFraction (const juce::AudioBuffer<float>& b, double sr)
     return all > 0 ? (float) (lo / all) : 0.0f;
 }
 
+// power at one frequency (Goertzel), channel 0
+float toneAt (const juce::AudioBuffer<float>& b, double sr, double hz)
+{
+    const double w = juce::MathConstants<double>::twoPi * hz / sr, c = 2.0 * std::cos (w);
+    double s1 = 0, s2 = 0;
+    const float* d = b.getReadPointer (0);
+    for (int i = 0; i < b.getNumSamples(); ++i) { const double s0 = d[i] + c * s1 - s2; s2 = s1; s1 = s0; }
+    return (float) std::sqrt (s1 * s1 + s2 * s2 - c * s1 * s2) / (float) b.getNumSamples();
+}
+
 void setReal (InstrumentProcessor& p, const juce::String& id, float value)
 {
     auto* prm = p.apvts.getParameter (id);
@@ -939,6 +949,55 @@ int main (int argc, char** argv)
             const float n = noteAt (b, 0.1, 0.55);
             check (std::abs (n - 57.0f) < 0.3f, "Pitch-bend range of 12 bends an octave (" + juce::String (n, 2) + ")");
         }
+    }
+
+    // ---------------------------------------------------------------- layers (stage 3)
+    std::cout << "Layers: sub and noise" << std::endl;
+    {
+        auto make = [&]
+        {
+            auto p = std::make_unique<InstrumentProcessor>();
+            p->setRateAndBufferSizeDetails (sr, 256);
+            p->prepareToPlay (sr, 256);
+            p->setMode (InstrumentProcessor::tableMode);
+            p->facetParam (InstrumentProcessor::space).setValueNotifyingHost (0.0f);
+            p->facetParam (InstrumentProcessor::motion).setValueNotifyingHost (0.0f);
+            p->facetParam (InstrumentProcessor::tone).setValueNotifyingHost (1.0f);
+            setReal (*p, "attack", 0.0f);
+            return p;
+        };
+        auto note = [&] (InstrumentProcessor& p)
+        {
+            return slice (renderEvents (p, sr, { Ev { 0.0, juce::MidiMessage::noteOn (1, 57, 0.8f) }, Ev { 0.8, juce::MidiMessage::noteOff (1, 57) } }, 0.8), sr, 0.2, 0.7);
+        };
+        auto plain = make();
+        const auto dry = note (*plain);
+        auto withSub = make();
+        withSub->apvts.getParameter ("subLevel")->setValueNotifyingHost (0.8f);
+        const auto sub1 = note (*withSub);
+        setReal (*withSub, "subOctave", 1.0f);
+        const auto sub2 = note (*withSub);
+        check (toneAt (sub1, sr, 110.0) > toneAt (dry, sr, 110.0) * 20.0f + 1.0e-4f, "Sub -1 octave adds 110 Hz under A3 (220 Hz)");
+        check (toneAt (sub2, sr, 55.0) > toneAt (dry, sr, 55.0) * 20.0f + 1.0e-4f && toneAt (sub2, sr, 110.0) < toneAt (sub1, sr, 110.0) * 0.2f,
+               "Sub -2 octaves moves it to 55 Hz");
+
+        auto noisy = make();
+        noisy->apvts.getParameter ("noiseLevel")->setValueNotifyingHost (0.8f);
+        noisy->apvts.getParameter ("noiseColour")->setValueNotifyingHost (1.0f);
+        const auto bright = note (*noisy);
+        noisy->apvts.getParameter ("noiseColour")->setValueNotifyingHost (0.0f);
+        const auto dark = note (*noisy);
+        check (toneAt (bright, sr, 9000.0) > toneAt (dry, sr, 9000.0) * 5.0f + 1.0e-5f, "Bright noise adds hiss above the harmonics");
+        check (lowFraction (dark, sr) > lowFraction (bright, sr) * 1.2f, "Dark noise is darker than bright noise");
+        const float rb = stats (bright, 0, bright.getNumSamples()).rms, rd = stats (dark, 0, dark.getNumSamples()).rms;
+        check (rd > rb * 0.5f && rd < rb * 2.0f, "Colour changes the tone, not the loudness much (" + juce::String (rd / rb, 2) + "x)");
+
+        // the filter shapes the layers too
+        auto filtered = make();
+        filtered->apvts.getParameter ("noiseLevel")->setValueNotifyingHost (0.8f);
+        filtered->apvts.getParameter ("noiseColour")->setValueNotifyingHost (1.0f);
+        filtered->facetParam (InstrumentProcessor::tone).setValueNotifyingHost (0.3f);
+        check (toneAt (note (*filtered), sr, 9000.0) < toneAt (bright, sr, 9000.0) * 0.2f, "The Tone filter shapes the layers as well");
     }
 
     // ---------------------------------------------------------------- modulation (stage 2)

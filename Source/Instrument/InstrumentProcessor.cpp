@@ -68,6 +68,16 @@ namespace
                                                                   juce::StringArray { "Low-pass", "High-pass", "Band-pass", "Notch" }, 0));
         layout.add (std::make_unique<juce::AudioParameterFloat> (juce::ParameterID { "resonance", 1 }, "Resonance", unit, 0.1f, pctAttr));
         layout.add (std::make_unique<juce::AudioParameterFloat> (juce::ParameterID { "keyTrack", 1 }, "Filter Key Tracking", unit, 0.0f, pctAttr));
+        // ---- Layers: a sine sub oscillator and a noise layer, mixed in before the filter
+        layout.add (std::make_unique<juce::AudioParameterFloat> (juce::ParameterID { "subLevel", 1 }, "Sub Level", unit, 0.0f, pctAttr));
+        layout.add (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { "subOctave", 1 }, "Sub Octave", juce::StringArray { "-1 oct", "-2 oct" }, 0));
+        layout.add (std::make_unique<juce::AudioParameterFloat> (juce::ParameterID { "noiseLevel", 1 }, "Noise Level", unit, 0.0f, pctAttr));
+        layout.add (std::make_unique<juce::AudioParameterFloat> (juce::ParameterID { "noiseColour", 1 }, "Noise Colour", unit, 0.6f,
+            juce::AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int)
+            {
+                return v < 0.35f ? "Dark " + juce::String (juce::roundToInt (v * 100.0f)) + "%"
+                     : v > 0.7f ? "Bright " + juce::String (juce::roundToInt (v * 100.0f)) + "%" : juce::String (juce::roundToInt (v * 100.0f)) + "%";
+            })));
         layout.add (std::make_unique<juce::AudioParameterFloat> (juce::ParameterID { "level", 1 }, "Level",
                                                                  juce::NormalisableRange<float> (-24.0f, 6.0f, 0.1f), -3.0f,
                                                                  juce::AudioParameterFloatAttributes().withLabel ("dB")));
@@ -130,6 +140,10 @@ InstrumentProcessor::InstrumentProcessor()
     params.filterType = apvts.getRawParameterValue ("filterType");
     params.resonance = apvts.getRawParameterValue ("resonance");
     params.keyTrack = apvts.getRawParameterValue ("keyTrack");
+    params.subLevel = apvts.getRawParameterValue ("subLevel");
+    params.subOctave = apvts.getRawParameterValue ("subOctave");
+    params.noiseLevel = apvts.getRawParameterValue ("noiseLevel");
+    params.noiseColour = apvts.getRawParameterValue ("noiseColour");
     rack.attach (apvts);
     modParams.attach (apvts);
     for (int l = 0; l < mod::numLfos; ++l)
@@ -702,7 +716,16 @@ std::vector<juce::RangedAudioParameter*> InstrumentProcessor::getRandomisableExt
             if (id != "space")
                 out.push_back (apvts.getParameter (id));
     }
-    if (effectsOnlyRoll || isModuleLocked ("mod"))
+    if (effectsOnlyRoll)
+        return out;
+    // layers that are switched in: their levels (and the noise colour)
+    if (params.subLevel->load() > 0.01f) out.push_back (apvts.getParameter ("subLevel"));
+    if (params.noiseLevel->load() > 0.01f)
+    {
+        out.push_back (apvts.getParameter ("noiseLevel"));
+        out.push_back (apvts.getParameter ("noiseColour"));
+    }
+    if (isModuleLocked ("mod"))
         return out;
 
     // Modulation in use: the amounts, the macros they read and the speed of the LFOs they use

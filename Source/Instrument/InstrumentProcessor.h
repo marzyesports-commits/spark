@@ -132,6 +132,10 @@ public:
         std::atomic<float>* filterType = nullptr;
         std::atomic<float>* resonance = nullptr;    // 0..1
         std::atomic<float>* keyTrack = nullptr;     // 0..1
+        std::atomic<float>* subLevel = nullptr;
+        std::atomic<float>* subOctave = nullptr;    // 0 = -1 octave, 1 = -2
+        std::atomic<float>* noiseLevel = nullptr;
+        std::atomic<float>* noiseColour = nullptr;  // 0 dark .. 1 bright
     } params;
 
     // Audio thread only: the note a new mono voice glides from (-1 = no glide). Set by SparkSynth.

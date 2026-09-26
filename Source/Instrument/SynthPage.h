@@ -62,6 +62,15 @@ private:
     ChoiceSegments type;
 };
 
+class LayersCard : public SynthCard
+{
+public:
+    explicit LayersCard (InstrumentProcessor&);
+
+private:
+    ChoiceSegments octave;
+};
+
 class PlayCard : public SynthCard
 {
 public:
@@ -156,6 +165,7 @@ public:
 
 private:
     FilterCard filter;
+    LayersCard layers;
     PlayCard play;
     MacroCard macros;
     LfoCard lfo1, lfo2;
