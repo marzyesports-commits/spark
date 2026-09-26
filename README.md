@@ -11,6 +11,19 @@ It comes as two plugins built from one codebase:
 
 Formats: **VST3**, **Audio Unit** and **standalone app** on macOS (universal: Apple Silicon and Intel, macOS 11+). VST3 and standalone also build on Windows and Linux.
 
+## Presets
+
+Spark ships with **103 instrument presets** and **75 effect presets**, sorted into categories. Each preset notes what kind of sample it suits. Click the preset name at the top to open the browser. There you can pick a category, search by name or by sample type (try "808", "vocal" or "breaks"), use the arrow keys to audition, or press **Surprise me** for a random preset.
+
+| Spark (instrument) | Spark FX (effect) |
+|---|---|
+| Starters · **Bass** (808s, subs, reese, growls) · **Pads** · Keys & Plucks · Leads · **Vocal Chops** · Textures · **Drums & Perc** · FX & Risers · Wavetable | Starters · Subtle Polish · Shimmer & Space · Rhythmic Stutter · Glitch & Chaos · Pitch & Harmony · Freeze & Drone · Lo-fi & Dark · **Vocal FX** · **Drum Bus** · **Bass Tools** |
+
+- **Level-matched.** Presets are level-matched so switching doesn't jump in volume, and Spark has a transparent safety clipper on its output.
+- **Presets act on your sound.** They shape whatever sound is loaded; they don't load a sample. Drop in the kind of sound the preset's note suggests.
+- **Your own presets.** **Save** stores your own presets under **User**, as `.sparkpreset` files in `Documents/Spark/Presets`. They're easy to back up or share. Right-click a user preset to reveal or delete it.
+- **Locks still apply.** Locked facets stay put when you browse presets.
+
 ## Using Spark
 
 - **The core.** The gold ring is your sound. Around it are eight **facets**. Drag an arc up or down to change a facet (hold Shift for fine control, double-click to reset).

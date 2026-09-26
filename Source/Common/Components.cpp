@@ -16,6 +16,25 @@ juce::Path makeIcon (Icon icon, juce::Rectangle<float> a)
         case Icon::chevronRight:
             p.startNewSubPath (sx (9), sy (6)); p.lineTo (sx (15), sy (12)); p.lineTo (sx (9), sy (18));
             break;
+        case Icon::chevronDown:
+            p.startNewSubPath (sx (6), sy (9)); p.lineTo (sx (12), sy (15)); p.lineTo (sx (18), sy (9));
+            break;
+        case Icon::cross:
+            p.startNewSubPath (sx (6), sy (6)); p.lineTo (sx (18), sy (18));
+            p.startNewSubPath (sx (18), sy (6)); p.lineTo (sx (6), sy (18));
+            break;
+        case Icon::shuffle:
+            p.startNewSubPath (sx (3), sy (7)); p.lineTo (sx (7), sy (7));
+            p.cubicTo (sx (12), sy (7), sx (12), sy (17), sx (17), sy (17)); p.lineTo (sx (21), sy (17));
+            p.startNewSubPath (sx (3), sy (17)); p.lineTo (sx (7), sy (17));
+            p.cubicTo (sx (12), sy (17), sx (12), sy (7), sx (17), sy (7)); p.lineTo (sx (21), sy (7));
+            p.startNewSubPath (sx (18), sy (4)); p.lineTo (sx (21), sy (7)); p.lineTo (sx (18), sy (10));
+            p.startNewSubPath (sx (18), sy (14)); p.lineTo (sx (21), sy (17)); p.lineTo (sx (18), sy (20));
+            break;
+        case Icon::search:
+            p.addEllipse (sx (4), sy (4), sx (16) - sx (4), sy (16) - sy (4));
+            p.startNewSubPath (sx (14.5f), sy (14.5f)); p.lineTo (sx (20), sy (20));
+            break;
         case Icon::settings:
             p.startNewSubPath (sx (4), sy (7)); p.lineTo (sx (14), sy (7));
             p.startNewSubPath (sx (18), sy (7)); p.lineTo (sx (20), sy (7));
@@ -179,13 +198,26 @@ void Header::paint (juce::Graphics& g)
     g.fillRoundedRectangle (pill, 22.0f);
     g.setColour (line);
     g.drawRoundedRectangle (pill.reduced (0.5f), 22.0f, 1.0f);
+    if (presetHover)
+    {
+        g.setColour (raised);
+        g.fillRoundedRectangle (pill.reduced (44.0f, 4.0f), 16.0f);
+    }
     g.setColour (muted);
     g.setFont (fonts::mono (10.0f).withExtraKerningFactor (0.18f));
-    g.drawText ("GEN " + juce::String (processor.currentGeneration()).paddedLeft ('0', 2),
+    g.drawText (processor.getPresetCategory().toUpperCase() + juce::String::fromUTF8 ("  \xc2\xb7  GEN ")
+                    + juce::String (processor.currentGeneration()).paddedLeft ('0', 2),
                 pill.withTrimmedTop (6.0f).withHeight (14.0f), juce::Justification::centred, false);
-    g.setColour (text);
-    g.setFont (fonts::body (15.0f, true));
-    g.drawText (processor.getPresetName(), pill.withTrimmedTop (20.0f).withHeight (20.0f), juce::Justification::centred, false);
+    const auto nameFont = fonts::body (15.0f, true);
+    const auto name = processor.getPresetName();
+    const float nameWidth = juce::jmin (220.0f, juce::GlyphArrangement::getStringWidth (nameFont, name));
+    g.setColour (presetHover ? gold : text);
+    g.setFont (nameFont);
+    g.drawText (name, pill.withTrimmedTop (20.0f).withHeight (20.0f).withSizeKeepingCentre (nameWidth + 4.0f, 20.0f),
+                juce::Justification::centred, true);
+    g.setColour (presetHover ? gold : muted);
+    auto chev = juce::Rectangle<float> (12.0f, 12.0f).withCentre ({ pill.getCentreX() + nameWidth * 0.5f + 12.0f, pill.getY() + 30.0f });
+    g.strokePath (makeIcon (Icon::chevronDown, chev), juce::PathStrokeType (1.6f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
 
     // plugin kind tag (the instrument and the effect are separate plugins)
     auto tag = kindArea.toFloat();
@@ -196,6 +228,29 @@ void Header::paint (juce::Graphics& g)
     g.setColour (text2);
     g.setFont (fonts::body (11.0f, true).withExtraKerningFactor (0.14f));
     g.drawText (fx ? "EFFECT" : "INSTRUMENT", tag, juce::Justification::centred, false);
+}
+
+void Header::mouseMove (const juce::MouseEvent& e)
+{
+    const bool h = presetArea.reduced (44, 0).contains (e.getPosition());
+    if (h != presetHover)
+    {
+        presetHover = h;
+        setMouseCursor (h ? juce::MouseCursor::PointingHandCursor : juce::MouseCursor::NormalCursor);
+        repaint();
+    }
+}
+
+void Header::mouseExit (const juce::MouseEvent&)
+{
+    presetHover = false;
+    repaint();
+}
+
+void Header::mouseUp (const juce::MouseEvent& e)
+{
+    if (presetArea.reduced (44, 0).contains (e.getPosition()) && onBrowse)
+        onBrowse();
 }
 
 // =====================================================================================
@@ -765,6 +820,342 @@ void LineageStrip::mouseUp (const juce::MouseEvent& e)
 }
 
 // =====================================================================================
+PresetBrowser::PresetBrowser (SparkProcessorBase& p) : processor (p)
+{
+    setWantsKeyboardFocus (true);
+    for (auto* b : { &surprise, &save, &close })
+        addAndMakeVisible (b);
+    addAndMakeVisible (search);
+    addAndMakeVisible (viewport);
+    viewport.setViewedComponent (&tiles, false);
+    viewport.setScrollBarsShown (true, false);
+    viewport.setScrollBarThickness (6);
+    viewport.getVerticalScrollBar().setColour (juce::ScrollBar::thumbColourId, colours::line2);
+
+    search.setTextToShowWhenEmpty ("Search presets", colours::muted);
+    search.setFont (fonts::body (13.0f));
+    search.setIndents (34, 9);
+    search.setColour (juce::TextEditor::backgroundColourId, juce::Colours::transparentBlack);
+    search.setColour (juce::TextEditor::outlineColourId, juce::Colours::transparentBlack);
+    search.setColour (juce::TextEditor::focusedOutlineColourId, juce::Colours::transparentBlack);
+    search.onFocusLost = [this] { repaint(); };
+    search.setColour (juce::TextEditor::textColourId, colours::text);
+    search.setColour (juce::TextEditor::highlightColourId, colours::gold.withAlpha (0.3f));
+    search.setColour (juce::CaretComponent::caretColourId, colours::gold);
+    search.onTextChange = [this] { rebuildList(); };
+    search.onReturnKey = [this] { if (! shown.empty()) processor.loadPreset (shown.front()); };
+    search.onEscapeKey = [this] { if (search.isEmpty()) { if (onClose) onClose(); } else search.clear(); rebuildList(); };
+
+    surprise.setTooltip ("Load a random preset from this category");
+    save.setTooltip ("Save the current sound as your own preset");
+    close.setTooltip ("Close (Esc)");
+    close.setTitle ("Close presets");
+    surprise.onClick = [this]
+    {
+        processor.loadRandomPreset (search.isEmpty() && selectedCategory != "All" ? selectedCategory : juce::String());
+    };
+    save.onClick = [this] { if (onSave) onSave(); };
+    close.onClick = [this] { if (onClose) onClose(); };
+
+    processor.addChangeListener (this);
+}
+
+PresetBrowser::~PresetBrowser() { processor.removeChangeListener (this); }
+
+void PresetBrowser::visibilityChanged()
+{
+    if (isVisible())
+    {
+        processor.rescanUserPresets();
+        refresh (true);
+        grabKeyboardFocus();
+    }
+}
+
+void PresetBrowser::changeListenerCallback (juce::ChangeBroadcaster*)
+{
+    if (isVisible())
+        refresh (false);
+}
+
+void PresetBrowser::refresh (bool jumpToCurrentCategory)
+{
+    categories = processor.getCategories();
+    if (jumpToCurrentCategory || ! categories.contains (selectedCategory))
+        selectedCategory = processor.getPresetCategory();
+    if (! categories.contains (selectedCategory))
+        selectedCategory = categories[0];
+    rebuildList();
+}
+
+int PresetBrowser::countIn (const juce::String& category) const
+{
+    int n = 0;
+    for (int i = 0; i < processor.getNumPresets(); ++i)
+        if (processor.getPreset (i).category == category) ++n;
+    return n;
+}
+
+void PresetBrowser::rebuildList()
+{
+    shown.clear();
+    const auto query = search.getText().trim().toLowerCase();
+    for (int i = 0; i < processor.getNumPresets(); ++i)
+    {
+        const auto& p = processor.getPreset (i);
+        if (query.isNotEmpty())
+        {
+            if ((p.name + " " + p.hint + " " + p.category).toLowerCase().contains (query))
+                shown.push_back (i);
+        }
+        else if (p.category == selectedCategory)
+        {
+            shown.push_back (i);
+        }
+    }
+    resized();
+    repaint();
+    tiles.repaint();
+}
+
+juce::Rectangle<int> PresetBrowser::categoryRow (int i) const
+{
+    return { 16, 70 + i * 30, 196, 28 };
+}
+
+juce::Rectangle<int> PresetBrowser::listArea() const
+{
+    return getLocalBounds().withTrimmedLeft (228).withTrimmedTop (64).reduced (0, 0).withTrimmedRight (16).withTrimmedBottom (16);
+}
+
+void PresetBrowser::resized()
+{
+    close.setBounds (getWidth() - 16 - 36, 14, 36, 36);
+    save.setBounds (close.getX() - 10 - 78, 16, 78, 32);
+    surprise.setBounds (save.getX() - 8 - 128, 16, 128, 32);
+    search.setBounds (228, 15, juce::jmin (300, surprise.getX() - 240), 34);
+
+    auto list = listArea().withTrimmedTop (44);
+    viewport.setBounds (list);
+    tiles.setSize (list.getWidth() - 8, juce::jmax (list.getHeight(), tiles.requiredHeight ((int) shown.size())));
+}
+
+void PresetBrowser::paint (juce::Graphics& g)
+{
+    using namespace colours;
+    auto b = getLocalBounds().toFloat();
+    g.setColour (bg);
+    g.fillRoundedRectangle (b, 16.0f);
+    g.setColour (line2);
+    g.drawRoundedRectangle (b.reduced (0.5f), 16.0f, 1.0f);
+
+    drawSectionLabel (g, "PRESETS", { 20.0f, 16.0f, 120.0f, 32.0f });
+    g.setColour (muted);
+    g.setFont (fonts::body (11.0f));
+    g.drawText (juce::String (processor.getNumPresets()) + " sounds", juce::Rectangle<float> (106.0f, 16.0f, 110.0f, 32.0f), juce::Justification::centredLeft, false);
+
+    // search field (the editor itself is transparent and sits on top)
+    auto field = search.getBounds().toFloat();
+    g.setColour (panel);
+    g.fillRoundedRectangle (field, field.getHeight() * 0.5f);
+    g.setColour (search.hasKeyboardFocus (true) ? gold : line2);
+    g.drawRoundedRectangle (field.reduced (0.5f), field.getHeight() * 0.5f, 1.0f);
+    g.setColour (muted);
+    auto si = juce::Rectangle<float> (14.0f, 14.0f).withCentre ({ (float) search.getX() + 18.0f, (float) search.getBounds().getCentreY() });
+    g.strokePath (makeIcon (Icon::search, si), juce::PathStrokeType (1.6f));
+
+    g.setColour (line);
+    g.fillRect (16, 62, getWidth() - 32, 1);
+
+    // categories
+    const bool searching = search.getText().trim().isNotEmpty();
+    for (int i = 0; i < categories.size(); ++i)
+    {
+        auto r = categoryRow (i).toFloat();
+        const bool sel = ! searching && categories[i] == selectedCategory;
+        if (sel || i == hoveredCategory)
+        {
+            g.setColour (sel ? selected : raised);
+            g.fillRoundedRectangle (r, 14.0f);
+        }
+        if (sel)
+        {
+            g.setColour (gold);
+            g.drawRoundedRectangle (r.reduced (0.5f), 14.0f, 1.0f);
+        }
+        g.setColour (sel ? gold : text);
+        g.setFont (fonts::body (13.0f, sel));
+        g.drawText (categories[i], r.reduced (14.0f, 0.0f), juce::Justification::centredLeft, false);
+        g.setColour (sel ? gold : muted);
+        g.setFont (fonts::mono (10.0f));
+        g.drawText (juce::String (countIn (categories[i])), r.reduced (14.0f, 0.0f), juce::Justification::centredRight, false);
+    }
+
+    // heading for the list
+    auto head = listArea().removeFromTop (40).toFloat();
+    g.setColour (text);
+    g.setFont (fonts::display (18.0f).withExtraKerningFactor (0.06f));
+    const auto title = searching ? "Results" : selectedCategory;
+    g.drawText (title, head.removeFromTop (22.0f), juce::Justification::centredLeft, false);
+    g.setColour (muted);
+    g.setFont (fonts::body (12.0f));
+    juce::String sub = searching ? juce::String ((int) shown.size()) + " matching \"" + search.getText().trim() + "\""
+                                 : processor.getCategoryHint (selectedCategory);
+    if (! searching && selectedCategory == SparkProcessorBase::userCategory && shown.empty())
+        sub = "Nothing saved yet. Shape a sound you love and press SAVE.";
+    g.drawText (sub, head, juce::Justification::centredLeft, true);
+}
+
+void PresetBrowser::mouseMove (const juce::MouseEvent& e)
+{
+    int h = -1;
+    for (int i = 0; i < categories.size(); ++i)
+        if (categoryRow (i).contains (e.getPosition())) h = i;
+    if (h != hoveredCategory)
+    {
+        hoveredCategory = h;
+        setMouseCursor (h >= 0 ? juce::MouseCursor::PointingHandCursor : juce::MouseCursor::NormalCursor);
+        repaint();
+    }
+}
+
+void PresetBrowser::mouseExit (const juce::MouseEvent&)
+{
+    hoveredCategory = -1;
+    repaint();
+}
+
+void PresetBrowser::mouseUp (const juce::MouseEvent& e)
+{
+    for (int i = 0; i < categories.size(); ++i)
+        if (categoryRow (i).contains (e.getPosition()))
+        {
+            selectedCategory = categories[i];
+            search.clear();
+            rebuildList();
+            viewport.setViewPosition (0, 0);
+            return;
+        }
+}
+
+bool PresetBrowser::keyPressed (const juce::KeyPress& k)
+{
+    if (k == juce::KeyPress::escapeKey)
+    {
+        if (onClose) onClose();
+        return true;
+    }
+    if (k == juce::KeyPress::downKey || k == juce::KeyPress::rightKey || k == juce::KeyPress::upKey || k == juce::KeyPress::leftKey)
+    {
+        if (shown.empty()) return true;
+        auto it = std::find (shown.begin(), shown.end(), processor.getPresetIndex());
+        int pos = it == shown.end() ? -1 : (int) (it - shown.begin());
+        const int step = (k == juce::KeyPress::downKey) ? 3 : (k == juce::KeyPress::upKey) ? -3 : (k == juce::KeyPress::rightKey ? 1 : -1);
+        pos = juce::jlimit (0, (int) shown.size() - 1, pos + step);
+        processor.loadPreset (shown[(size_t) pos]);
+        return true;
+    }
+    return false;
+}
+
+// ---- tiles
+juce::Rectangle<int> PresetBrowser::Tiles::tileBounds (int slot) const
+{
+    const int cols = 3, gap = 8, h = 58;
+    const int w = (getWidth() - gap * (cols - 1)) / cols;
+    return { (slot % cols) * (w + gap), (slot / cols) * (h + gap), w, h };
+}
+
+int PresetBrowser::Tiles::requiredHeight (int count) const
+{
+    const int rows = (count + 2) / 3;
+    return rows * 66;
+}
+
+int PresetBrowser::Tiles::slotAt (juce::Point<int> p) const
+{
+    for (int i = 0; i < (int) owner.shown.size(); ++i)
+        if (tileBounds (i).contains (p))
+            return i;
+    return -1;
+}
+
+void PresetBrowser::Tiles::paint (juce::Graphics& g)
+{
+    using namespace colours;
+    const int current = owner.processor.getPresetIndex();
+    const bool searching = owner.search.getText().trim().isNotEmpty();
+    for (int i = 0; i < (int) owner.shown.size(); ++i)
+    {
+        const int idx = owner.shown[(size_t) i];
+        const auto& p = owner.processor.getPreset (idx);
+        auto r = tileBounds (i).toFloat();
+        const bool isCur = idx == current;
+
+        g.setColour (isCur ? selected : (i == hovered ? raised : panel));
+        g.fillRoundedRectangle (r, 12.0f);
+        g.setColour (isCur ? gold : (i == hovered ? line2 : line));
+        g.drawRoundedRectangle (r.reduced (0.5f), 12.0f, 1.0f);
+
+        auto inner = r.reduced (14.0f, 9.0f);
+        if (isCur)
+        {
+            g.setColour (gold);
+            g.fillPath (makeStarPath (juce::Rectangle<float> (12.0f, 12.0f).withCentre ({ inner.getRight() - 6.0f, inner.getY() + 9.0f })));
+        }
+        g.setColour (isCur ? gold : text);
+        g.setFont (fonts::body (14.0f, true));
+        g.drawText (p.name, inner.removeFromTop (20.0f).withTrimmedRight (isCur ? 18.0f : 0.0f), juce::Justification::centredLeft, true);
+        g.setColour (muted);
+        g.setFont (fonts::body (11.0f));
+        g.drawText (searching ? p.category + juce::String::fromUTF8 (" \xc2\xb7 ") + p.hint : p.hint, inner, juce::Justification::centredLeft, true);
+    }
+}
+
+void PresetBrowser::Tiles::mouseMove (const juce::MouseEvent& e)
+{
+    const int h = slotAt (e.getPosition());
+    if (h != hovered)
+    {
+        hovered = h;
+        setMouseCursor (h >= 0 ? juce::MouseCursor::PointingHandCursor : juce::MouseCursor::NormalCursor);
+        repaint();
+    }
+}
+
+void PresetBrowser::Tiles::mouseExit (const juce::MouseEvent&)
+{
+    hovered = -1;
+    repaint();
+}
+
+void PresetBrowser::Tiles::mouseUp (const juce::MouseEvent& e)
+{
+    const int slot = slotAt (e.getPosition());
+    if (slot < 0)
+        return;
+    const int idx = owner.shown[(size_t) slot];
+    const auto& preset = owner.processor.getPreset (idx);
+
+    if (e.mods.isPopupMenu() && preset.file != juce::File())
+    {
+        juce::PopupMenu m;
+        m.setLookAndFeel (&getLookAndFeel());
+        m.addItem ("Show in Finder", [f = preset.file] { f.revealToUser(); });
+        m.addItem ("Delete preset", [this, idx] { owner.processor.deleteUserPreset (idx); owner.refresh (false); });
+        m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this).withMousePosition());
+        return;
+    }
+    owner.processor.loadPreset (idx);
+}
+
+void PresetBrowser::Tiles::mouseDoubleClick (const juce::MouseEvent& e)
+{
+    if (slotAt (e.getPosition()) >= 0 && owner.onClose)
+        owner.onClose();
+}
+
+// =====================================================================================
 void SparkEditorBase::Content::paint (juce::Graphics& g)
 {
     g.fillAll (colours::bg);
@@ -778,7 +1169,8 @@ SparkEditorBase::SparkEditorBase (SparkProcessorBase& p, bool isFx)
       mutate (p.mutateParam(), "MUTATE", "Mutate: how many facets move on each Spark"),
       chaos (p.chaosParam(), "CHAOS", "Chaos: how far they move"),
       facets (p),
-      lineage (p)
+      lineage (p),
+      browser (p)
 {
     setLookAndFeel (&lookAndFeel);
     tooltips.setLookAndFeel (&lookAndFeel);
@@ -795,6 +1187,12 @@ SparkEditorBase::SparkEditorBase (SparkProcessorBase& p, bool isFx)
     lineage.setBounds (24, 540, 1072, 150);
 
     header.onSettings = [this] (juce::Component& anchor) { showSettingsMenu (anchor); };
+    header.onBrowse = [this] { setBrowserVisible (! browser.isVisible()); };
+
+    contentComponent.addChildComponent (browser);
+    browser.setBounds (24, 86, 1072, 440);
+    browser.onClose = [this] { setBrowserVisible (false); };
+    browser.onSave = [this] { promptToSavePreset(); };
 
     setResizable (true, true);
     setResizeLimits (designWidth * 7 / 10, designHeight * 7 / 10, designWidth * 3 / 2, designHeight * 3 / 2);
@@ -828,10 +1226,19 @@ void SparkEditorBase::showSettingsMenu (juce::Component& anchor)
     addExtraMenuItems (m);
     if (m.getNumItems() > 0)
         m.addSeparator();
+    m.addItem ("Browse presets...", [this] { setBrowserVisible (true); });
+    m.addItem ("Save preset...", [this] { promptToSavePreset(); });
     juce::PopupMenu presets;
-    for (int i = 0; i < sparkProcessor.getNumPresets(); ++i)
-        presets.addItem (sparkProcessor.getProgramName (i), true, i == sparkProcessor.getPresetIndex(),
-                         [this, i] { sparkProcessor.loadPreset (i); });
+    for (const auto& category : sparkProcessor.getCategories())
+    {
+        juce::PopupMenu sub;
+        for (int i = 0; i < sparkProcessor.getNumPresets(); ++i)
+            if (sparkProcessor.getPreset (i).category == category)
+                sub.addItem (sparkProcessor.getPreset (i).name, true, i == sparkProcessor.getPresetIndex(),
+                             [this, i] { sparkProcessor.loadPreset (i); });
+        if (sub.getNumItems() > 0)
+            presets.addSubMenu (category, sub);
+    }
     m.addSubMenu ("Presets", presets);
     m.addItem ("Unlock all facets", [this] { for (int i = 0; i < numFacets; ++i) sparkProcessor.setLocked (i, false); });
     m.addItem ("Clear lineage", [this]
@@ -847,6 +1254,35 @@ void SparkEditorBase::showSettingsMenu (juce::Component& anchor)
                                   "Fonts: Syne, Manrope and JetBrains Mono (SIL Open Font License).");
     });
     m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&anchor));
+}
+
+void SparkEditorBase::setBrowserVisible (bool shouldShow)
+{
+    browser.setVisible (shouldShow);
+    if (shouldShow)
+        browser.toFront (true);
+}
+
+void SparkEditorBase::promptToSavePreset()
+{
+    auto* w = new juce::AlertWindow ("Save preset", "Name your sound. It will appear under User in the preset browser.",
+                                     juce::MessageBoxIconType::NoIcon, this);
+    w->setLookAndFeel (&lookAndFeel);
+    const auto current = sparkProcessor.getPresetName();
+    w->addTextEditor ("name", sparkProcessor.getPresetCategory() == SparkProcessorBase::userCategory ? current : current + " " + juce::String (sparkProcessor.currentGeneration()), "Name");
+    w->addButton ("Save", 1, juce::KeyPress (juce::KeyPress::returnKey));
+    w->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+    w->enterModalState (true, juce::ModalCallbackFunction::create ([this, w] (int result)
+    {
+        if (result == 1)
+        {
+            juce::String error;
+            if (! sparkProcessor.saveUserPreset (w->getTextEditorContents ("name"), error))
+                showMessage ("Couldn't save", error);
+            else if (browser.isVisible())
+                browser.refresh (true);
+        }
+    }), true);
 }
 
 void SparkEditorBase::showMessage (const juce::String& title, const juce::String& text)

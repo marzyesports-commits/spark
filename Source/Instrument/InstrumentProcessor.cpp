@@ -1,6 +1,7 @@
 #include "InstrumentProcessor.h"
 #include "InstrumentEditor.h"
 #include "SparkVoice.h"
+#include "Common/Presets.h"
 
 namespace spark
 {
@@ -17,23 +18,6 @@ namespace
             { "drive",    "DRIVE",    0.3f,  fmt::driveDb,   "Saturation" },
             { "motion",   "MOTION",   0.4f,  fmt::percent,   "Movement: grain spray, stereo spread, table sweep and detune" },
             { "space",    "SPACE",    0.42f, fmt::percent,   "Reverb size and amount" },
-        };
-    }
-
-    std::map<juce::String, float> env (bool table, float a, float d, float s, float r)
-    {
-        return { { "mode", table ? 1.0f : 0.0f }, { "attack", a }, { "decay", d }, { "sustain", s }, { "release", r } };
-    }
-
-    std::vector<Preset> instrumentPresets()
-    {
-        return {
-            { "Gilded Dust",  { 0.5f, 0.32f, 0.45f, 0.58f, 0.68f, 0.3f, 0.4f, 0.42f },  env (false, 0.08f, 0.4f, 0.7f, 0.35f) },
-            { "Glass Choir",  { 0.5f, 0.55f, 0.75f, 0.3f, 0.8f, 0.1f, 0.55f, 0.65f },  env (false, 0.35f, 0.5f, 0.8f, 0.55f) },
-            { "Ember Bass",   { 0.25f, 0.2f, 0.2f, 0.35f, 0.42f, 0.55f, 0.15f, 0.1f }, env (true, 0.02f, 0.35f, 0.6f, 0.2f) },
-            { "Halo Pad",     { 0.5f, 0.4f, 0.5f, 0.6f, 0.62f, 0.12f, 0.7f, 0.7f },    env (true, 0.5f, 0.6f, 0.85f, 0.7f) },
-            { "Night Static", { 0.5f, 0.8f, 0.12f, 0.5f, 0.55f, 0.45f, 0.85f, 0.35f }, env (false, 0.05f, 0.3f, 0.5f, 0.4f) },
-            { "Bright Pluck", { 0.5f, 0.3f, 0.4f, 0.2f, 0.85f, 0.25f, 0.1f, 0.3f },    env (true, 0.01f, 0.3f, 0.15f, 0.3f) },
         };
     }
 
@@ -77,7 +61,7 @@ void SourceData::computePeaks()
 
 InstrumentProcessor::InstrumentProcessor()
     : SparkProcessorBase (BusesProperties().withOutput ("Output", juce::AudioChannelSet::stereo(), true),
-                          instrumentFacets(), addInstrumentParameters, instrumentPresets(), "instrument")
+                          instrumentFacets(), addInstrumentParameters, makeInstrumentPresets(), "instrument")
 {
     formats.registerBasicFormats();
 
@@ -377,11 +361,19 @@ void InstrumentProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
         reverb.process (juce::dsp::ProcessContextReplacing<float> (block));
     }
 
+    // Level, then a transparent safety clipper: untouched below 0.8, rounds off smoothly above
+    // so stacked chords or hot samples never hard-clip the DAW's input.
     for (int i = 0; i < n; ++i)
     {
         const float g = levelSmooth.getNextValue();
         for (int ch = 0; ch < numCh; ++ch)
-            buffer.getWritePointer (ch)[i] *= g;
+        {
+            auto& x = buffer.getWritePointer (ch)[i];
+            x *= g;
+            const float ax = std::abs (x);
+            if (ax > 0.8f)
+                x = std::copysign (0.8f + 0.2f * std::tanh ((ax - 0.8f) / 0.2f), x);
+        }
     }
 }
 

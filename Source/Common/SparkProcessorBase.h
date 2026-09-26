@@ -17,9 +17,24 @@ struct FacetSpec
 
 struct Preset
 {
+    juce::String category;
     juce::String name;
+    juce::String hint;                    // what kind of sample it suits
     FacetValues facets {};
     std::map<juce::String, float> extras; // other parameter id -> normalised value
+    juce::File file;                      // set for user presets
+};
+
+struct PresetCategory
+{
+    juce::String name;
+    juce::String hint;
+};
+
+struct PresetLibrary
+{
+    std::vector<PresetCategory> categories;
+    std::vector<Preset> presets;
 };
 
 // Value formatters shared by both plugins.
@@ -48,7 +63,7 @@ public:
 
     SparkProcessorBase (const BusesProperties&, std::vector<FacetSpec> facets,
                         std::function<void (Layout&)> addExtraParameters,
-                        std::vector<Preset> presets, juce::String pluginKind);
+                        PresetLibrary factoryPresets, juce::String pluginKind);
 
     juce::AudioProcessorValueTreeState apvts;
 
@@ -72,11 +87,23 @@ public:
     juce::RangedAudioParameter& mutateParam() const { return *mutate; }
     juce::RangedAudioParameter& chaosParam() const  { return *chaos; }
 
-    // ---- presets
-    int getNumPresets() const noexcept { return (int) presets.size(); }
+    // ---- presets: factory presets first, then the user's saved ones
+    static constexpr const char* userCategory = "User";
+    int getNumPresets() const noexcept { return (int) (presets.size() + userPresets.size()); }
+    int getNumFactoryPresets() const noexcept { return (int) presets.size(); }
+    const Preset& getPreset (int index) const;
     int getPresetIndex() const noexcept { return presetIndex; }
     juce::String getPresetName() const;
+    juce::String getPresetCategory() const;
     void loadPreset (int index);
+    void loadRandomPreset (const juce::String& categoryOrEmpty);
+    juce::StringArray getCategories() const;
+    juce::String getCategoryHint (const juce::String& category) const;
+
+    juce::File getUserPresetFolder() const;
+    void rescanUserPresets();
+    bool saveUserPreset (const juce::String& name, juce::String& error);
+    bool deleteUserPreset (int index);
 
     // ---- visuals: 'n' values in -1..1 describing the current sound as a ring
     virtual void getCoreShape (std::vector<float>& out, int n) = 0;
@@ -86,8 +113,8 @@ public:
     // ---- AudioProcessor
     bool hasEditor() const override { return true; }
     double getTailLengthSeconds() const override { return 4.0; }
-    int getNumPrograms() override { return juce::jmax (1, getNumPresets()); }
-    int getCurrentProgram() override { return juce::jmax (0, presetIndex); }
+    int getNumPrograms() override { return juce::jmax (1, getNumFactoryPresets()); }
+    int getCurrentProgram() override { return juce::jlimit (0, juce::jmax (0, getNumFactoryPresets() - 1), presetIndex); }
     void setCurrentProgram (int index) override { loadPreset (index); }
     const juce::String getProgramName (int index) override;
     void changeProgramName (int, const juce::String&) override {}
@@ -107,7 +134,8 @@ private:
     juce::RangedAudioParameter* mutate = nullptr;
     juce::RangedAudioParameter* chaos = nullptr;
     FacetLocks locks {};
-    std::vector<Preset> presets;
+    std::vector<PresetCategory> categories;
+    std::vector<Preset> presets, userPresets;
     int presetIndex = 0;
     juce::String kind;
     juce::Random random;

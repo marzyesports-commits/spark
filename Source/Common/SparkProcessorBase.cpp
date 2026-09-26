@@ -60,12 +60,13 @@ SparkProcessorBase::Layout SparkProcessorBase::buildLayout (const std::vector<Fa
 }
 
 SparkProcessorBase::SparkProcessorBase (const BusesProperties& buses, std::vector<FacetSpec> facets,
-                                        std::function<void (Layout&)> addExtra, std::vector<Preset> presetList,
+                                        std::function<void (Layout&)> addExtra, PresetLibrary library,
                                         juce::String pluginKind)
     : juce::AudioProcessor (buses),
       apvts (*this, nullptr, "SPARK", buildLayout (facets, addExtra)),
       facetSpecs (std::move (facets)),
-      presets (std::move (presetList)),
+      categories (std::move (library.categories)),
+      presets (std::move (library.presets)),
       kind (std::move (pluginKind))
 {
     jassert ((int) facetSpecs.size() == numFacets);
@@ -74,6 +75,7 @@ SparkProcessorBase::SparkProcessorBase (const BusesProperties& buses, std::vecto
     mutate = apvts.getParameter ("mutate");
     chaos = apvts.getParameter ("chaos");
 
+    rescanUserPresets();
     if (! presets.empty())
         loadPreset (0);
     else
@@ -173,25 +175,68 @@ int SparkProcessorBase::currentGeneration() const noexcept
     return n != nullptr ? n->gen : 1;
 }
 
-juce::String SparkProcessorBase::getPresetName() const
+const Preset& SparkProcessorBase::getPreset (int index) const
 {
-    return juce::isPositiveAndBelow (presetIndex, (int) presets.size()) ? presets[(size_t) presetIndex].name : juce::String ("Init");
+    static const Preset empty { "Starters", "Init", {}, {}, {}, {} };
+    if (juce::isPositiveAndBelow (index, (int) presets.size()))
+        return presets[(size_t) index];
+    index -= (int) presets.size();
+    if (juce::isPositiveAndBelow (index, (int) userPresets.size()))
+        return userPresets[(size_t) index];
+    return empty;
 }
+
+juce::String SparkProcessorBase::getPresetName() const     { return getPreset (presetIndex).name; }
+juce::String SparkProcessorBase::getPresetCategory() const { return getPreset (presetIndex).category; }
 
 const juce::String SparkProcessorBase::getProgramName (int index)
 {
     return juce::isPositiveAndBelow (index, (int) presets.size()) ? presets[(size_t) index].name : juce::String ("Init");
 }
 
+juce::StringArray SparkProcessorBase::getCategories() const
+{
+    juce::StringArray names;
+    for (const auto& c : categories)
+        names.add (c.name);
+    for (const auto& p : presets)
+        names.addIfNotAlreadyThere (p.category);
+    names.add (userCategory);
+    return names;
+}
+
+juce::String SparkProcessorBase::getCategoryHint (const juce::String& category) const
+{
+    if (category == userCategory)
+        return "Presets you've saved. They live in " + getUserPresetFolder().getFullPathName();
+    for (const auto& c : categories)
+        if (c.name == category)
+            return c.hint;
+    return {};
+}
+
 void SparkProcessorBase::loadPreset (int index)
 {
-    if (presets.empty())
+    const int total = getNumPresets();
+    if (total == 0)
         return;
-    presetIndex = ((index % (int) presets.size()) + (int) presets.size()) % (int) presets.size();
-    const auto& p = presets[(size_t) presetIndex];
+    presetIndex = ((index % total) + total) % total;
+    const auto& p = getPreset (presetIndex);
 
-    for (const auto& [id, value] : p.extras)
-        setParam (id, value);
+    // Reset the non-facet sound settings first so nothing leaks over from the previous preset,
+    // then apply the preset's own values.
+    const juce::StringArray untouched { "mutate", "chaos", "freeze", "bypass" };
+    for (auto* param : getParameters())
+    {
+        auto* ranged = dynamic_cast<juce::RangedAudioParameter*> (param);
+        if (ranged == nullptr || untouched.contains (ranged->getParameterID())
+            || std::find (facetParams.begin(), facetParams.end(), ranged) != facetParams.end())
+            continue;
+        const auto it = p.extras.find (ranged->getParameterID());
+        const float target = it != p.extras.end() ? it->second : ranged->getDefaultValue();
+        if (std::abs (ranged->getValue() - target) > 1.0e-5f)
+            setParam (ranged->getParameterID(), target);
+    }
 
     // Presets load all facets, but respect locks so a locked facet survives preset browsing.
     FacetValues v = p.facets;
@@ -200,8 +245,117 @@ void SparkProcessorBase::loadPreset (int index)
         if (locks[(size_t) i]) v[(size_t) i] = now[(size_t) i];
 
     applyFacetValues (v);
-    lineage.push (v, (juce::uint32) juce::DefaultHashFunctions::generateHash (p.name, 1 << 30));
+    lineage.push (v, (juce::uint32) juce::DefaultHashFunctions::generateHash (p.category + p.name, 1 << 30));
     sendChangeMessage();
+}
+
+void SparkProcessorBase::loadRandomPreset (const juce::String& category)
+{
+    juce::Array<int> candidates;
+    for (int i = 0; i < getNumPresets(); ++i)
+        if ((category.isEmpty() || getPreset (i).category == category) && i != presetIndex)
+            candidates.add (i);
+    if (! candidates.isEmpty())
+        loadPreset (candidates[random.nextInt (candidates.size())]);
+}
+
+juce::File SparkProcessorBase::getUserPresetFolder() const
+{
+    return juce::File::getSpecialLocation (juce::File::userDocumentsDirectory)
+        .getChildFile ("Spark").getChildFile ("Presets").getChildFile (kind == "fx" ? "Spark FX" : "Spark");
+}
+
+void SparkProcessorBase::rescanUserPresets()
+{
+    const auto current = presetIndex >= getNumFactoryPresets() ? getPreset (presetIndex).file : juce::File();
+    userPresets.clear();
+
+    auto files = getUserPresetFolder().findChildFiles (juce::File::findFiles, false, "*.sparkpreset");
+    files.sort();
+    for (const auto& f : files)
+    {
+        auto xml = juce::XmlDocument::parse (f);
+        if (xml == nullptr || ! xml->hasTagName ("SparkPreset") || xml->getStringAttribute ("kind") != kind)
+            continue;
+
+        Preset p;
+        p.category = userCategory;
+        p.name = xml->getStringAttribute ("name", f.getFileNameWithoutExtension());
+        p.hint = xml->getStringAttribute ("hint", "Saved " + f.getLastModificationTime().formatted ("%d %b %Y"));
+        p.file = f;
+        p.facets = currentFacetValues();
+        for (auto* e : xml->getChildWithTagNameIterator ("PARAM"))
+        {
+            const auto id = e->getStringAttribute ("id");
+            const float value = juce::jlimit (0.0f, 1.0f, (float) e->getDoubleAttribute ("value"));
+            bool isFacet = false;
+            for (int i = 0; i < numFacets; ++i)
+                if (facetSpecs[(size_t) i].id == id) { p.facets[(size_t) i] = value; isFacet = true; }
+            if (! isFacet && apvts.getParameter (id) != nullptr)
+                p.extras[id] = value;
+        }
+        userPresets.push_back (std::move (p));
+    }
+
+    if (current != juce::File())
+        for (int i = 0; i < (int) userPresets.size(); ++i)
+            if (userPresets[(size_t) i].file == current)
+                presetIndex = getNumFactoryPresets() + i;
+    sendChangeMessage();
+}
+
+bool SparkProcessorBase::saveUserPreset (const juce::String& rawName, juce::String& error)
+{
+    const auto name = rawName.trim();
+    if (name.isEmpty())
+    {
+        error = "Give the preset a name.";
+        return false;
+    }
+    auto folder = getUserPresetFolder();
+    if (! folder.createDirectory())
+    {
+        error = "Couldn't create " + folder.getFullPathName();
+        return false;
+    }
+
+    juce::XmlElement xml ("SparkPreset");
+    xml.setAttribute ("kind", kind);
+    xml.setAttribute ("name", name);
+    xml.setAttribute ("version", 1);
+    const juce::StringArray skip { "mutate", "chaos", "freeze", "bypass" };
+    for (auto* param : getParameters())
+        if (auto* ranged = dynamic_cast<juce::RangedAudioParameter*> (param); ranged != nullptr && ! skip.contains (ranged->getParameterID()))
+        {
+            auto* e = xml.createNewChildElement ("PARAM");
+            e->setAttribute ("id", ranged->getParameterID());
+            e->setAttribute ("value", ranged->getValue());
+        }
+
+    const auto file = folder.getChildFile (juce::File::createLegalFileName (name) + ".sparkpreset");
+    if (! xml.writeTo (file))
+    {
+        error = "Couldn't write " + file.getFullPathName();
+        return false;
+    }
+
+    rescanUserPresets();
+    for (int i = 0; i < (int) userPresets.size(); ++i)
+        if (userPresets[(size_t) i].file == file)
+            presetIndex = getNumFactoryPresets() + i;
+    sendChangeMessage();
+    return true;
+}
+
+bool SparkProcessorBase::deleteUserPreset (int index)
+{
+    const auto& p = getPreset (index);
+    if (p.file == juce::File() || ! (p.file.moveToTrash() || p.file.deleteFile()))
+        return false;
+    if (index == presetIndex)
+        presetIndex = 0;
+    rescanUserPresets();
+    return true;
 }
 
 void SparkProcessorBase::getStateInformation (juce::MemoryBlock& dest)
@@ -209,6 +363,8 @@ void SparkProcessorBase::getStateInformation (juce::MemoryBlock& dest)
     auto state = apvts.copyState();
     state.setProperty ("pluginKind", kind, nullptr);
     state.setProperty ("presetIndex", presetIndex, nullptr);
+    state.setProperty ("presetName", getPresetName(), nullptr);
+    state.setProperty ("presetCategory", getPresetCategory(), nullptr);
 
     juce::String lockString;
     for (auto l : locks) lockString << (l ? "1" : "0");
@@ -235,7 +391,16 @@ void SparkProcessorBase::setStateInformation (const void* data, int size)
     if (! state.hasType (apvts.state.getType()))
         return;
 
-    presetIndex = juce::jlimit (0, juce::jmax (0, (int) presets.size() - 1), (int) state.getProperty ("presetIndex", 0));
+    // Find the preset by name first (indices shift when presets are added), then fall back to the index.
+    presetIndex = juce::jlimit (0, juce::jmax (0, getNumPresets() - 1), (int) state.getProperty ("presetIndex", 0));
+    const auto savedName = state.getProperty ("presetName").toString();
+    const auto savedCategory = state.getProperty ("presetCategory").toString();
+    for (int i = 0; i < getNumPresets(); ++i)
+        if (getPreset (i).name == savedName && (savedCategory.isEmpty() || getPreset (i).category == savedCategory))
+        {
+            presetIndex = i;
+            break;
+        }
     const auto lockString = state.getProperty ("locks").toString();
     for (int i = 0; i < numFacets; ++i)
         locks[(size_t) i] = lockString.length() > i && lockString[i] == '1';

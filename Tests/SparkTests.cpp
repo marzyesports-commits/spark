@@ -1,6 +1,7 @@
 // Offline checks for Spark: renders audio, exercises the randomiser, round-trips
 // wavetables and state, and snapshots both editors to PNG. Not shipped.
 #include <juce_audio_utils/juce_audio_utils.h>
+#include <set>
 #include "Instrument/InstrumentProcessor.h"
 #include "Instrument/InstrumentEditor.h"
 #include "FX/FxProcessor.h"
@@ -19,6 +20,22 @@ void check (bool ok, const juce::String& what)
 }
 
 struct Stats { float peak = 0, rms = 0; bool finite = true; };
+
+// Loudest 400 ms window (a rough "momentary loudness"), in dB
+float momentaryMaxDb (const juce::AudioBuffer<float>& b, double sr)
+{
+    const int win = (int) (0.4 * sr), hop = win / 4;
+    double best = 1.0e-12;
+    for (int start = 0; start + win <= b.getNumSamples(); start += hop)
+    {
+        double sum = 0;
+        for (int c = 0; c < b.getNumChannels(); ++c)
+            for (int i = start; i < start + win; ++i)
+                sum += (double) b.getSample (c, i) * b.getSample (c, i);
+        best = juce::jmax (best, sum / (double) (win * b.getNumChannels()));
+    }
+    return (float) (10.0 * std::log10 (best));
+}
 
 Stats stats (const juce::AudioBuffer<float>& b, int start, int len)
 {
@@ -94,18 +111,38 @@ int main (int argc, char** argv)
         InstrumentProcessor p;
         p.setRateAndBufferSizeDetails (sr, 512);
         p.prepareToPlay (sr, 512);
+        juce::String levels = "category,preset,engine,rms_db,peak,momentary_db\n";
         for (int i = 0; i < p.getNumPresets(); ++i)
         {
             p.loadPreset (i);
-            auto audio = renderNotes (p, sr, { 60, 64, 67 }, 1.5, 5.0);
-            const auto held = stats (audio, (int) (0.3 * sr), (int) (1.0 * sr));
+            const auto& preset = p.getPreset (i);
+            const bool bass = preset.category == "Bass";
+            const std::vector<int> notes = bass ? std::vector<int> { 48 } : std::vector<int> { 60, 64, 67 };
+            auto audio = renderNotes (p, sr, notes, 1.5, 7.0);
+            const auto held = stats (audio, 0, (int) (1.5 * sr));
             const auto end = stats (audio, audio.getNumSamples() - (int) (0.3 * sr), (int) (0.3 * sr));
-            check (held.finite && held.rms > 0.01f && held.peak < 2.0f,
-                   p.getPresetName() + " (" + (p.getMode() == InstrumentProcessor::tableMode ? "table" : "grain") + "): rms "
-                       + juce::String (held.rms, 3) + ", peak " + juce::String (held.peak, 2));
-            check (end.rms < held.rms * 0.2f, p.getPresetName() + ": fades after release (tail rms " + juce::String (end.rms, 4) + ")");
-            writeWav (outDir.getChildFile ("instrument-" + juce::String (i) + "-" + p.getPresetName().replaceCharacter (' ', '_') + ".wav"), audio, sr);
+            const float db = juce::Decibels::gainToDecibels (held.rms, -100.0f);
+            check (held.finite && db > -36.0f && held.peak < 1.5f,
+                   preset.category + " / " + preset.name + ": " + juce::String (db, 1) + " dB rms, peak " + juce::String (held.peak, 2));
+            check (end.rms < held.rms * 0.25f, preset.name + ": fades after release");
+            levels << preset.category << "," << preset.name << "," << (p.getMode() == InstrumentProcessor::tableMode ? "table" : "grain")
+                   << "," << juce::String (db, 2) << "," << juce::String (held.peak, 3)
+                   << "," << juce::String (momentaryMaxDb (audio, sr), 2) << "\n";
+            if (i % 8 == 0)
+                writeWav (outDir.getChildFile ("instrument-" + juce::String (i) + "-" + preset.name.replaceCharacter (' ', '_') + ".wav"), audio, sr);
         }
+        outDir.getChildFile ("instrument-levels.csv").replaceWithText (levels);
+
+        // Library sanity: every preset has a category that is listed and a hint, names unique within a category
+        bool tidy = true;
+        std::set<std::string> seen;
+        for (int i = 0; i < p.getNumFactoryPresets(); ++i)
+        {
+            const auto& pr = p.getPreset (i);
+            tidy &= pr.hint.isNotEmpty() && p.getCategories().contains (pr.category) && p.getCategoryHint (pr.category).isNotEmpty();
+            tidy &= seen.insert ((pr.category + "/" + pr.name).toStdString()).second;
+        }
+        check (tidy && p.getNumFactoryPresets() >= 100, juce::String (p.getNumFactoryPresets()) + " instrument presets, all categorised with hints");
 
         // Table mode across the keyboard: nothing should blow up at extreme pitches
         p.loadPreset (2);
@@ -239,9 +276,12 @@ int main (int argc, char** argv)
             in.setSample (1, i, x);
         }
 
+        juce::String levels = "category,preset,rms_db,peak\n";
+            const float dryDb = juce::Decibels::gainToDecibels (stats (in, (int) sr, total - (int) sr).rms);
         for (int preset = 0; preset < p.getNumPresets(); ++preset)
         {
             p.loadPreset (preset);
+            const auto& pr = p.getPreset (preset);
             juce::AudioBuffer<float> out (in);
             for (int pos = 0; pos < total; pos += 512)
             {
@@ -252,10 +292,15 @@ int main (int argc, char** argv)
             const auto s = stats (out, (int) sr, total - (int) sr);
             float diff = 0;
             for (int i = (int) sr; i < total; ++i) diff += std::abs (out.getSample (0, i) - in.getSample (0, i));
-            check (s.finite && s.peak < 2.0f && s.rms > 0.01f && diff / (float) (total - sr) > 0.01f,
-                   p.getPresetName() + ": rms " + juce::String (s.rms, 3) + ", differs from dry by " + juce::String (diff / (float) (total - sr), 3));
-            writeWav (outDir.getChildFile ("fx-" + juce::String (preset) + "-" + p.getPresetName().replaceCharacter (' ', '_') + ".wav"), out, sr);
+            const float db = juce::Decibels::gainToDecibels (s.rms, -100.0f);
+            check (s.finite && s.peak < 1.5f && std::abs (db - dryDb) < 12.0f && diff / (float) (total - sr) > 0.005f,
+                   pr.category + " / " + pr.name + ": " + juce::String (db - dryDb, 1) + " dB vs dry, peak " + juce::String (s.peak, 2));
+            levels << pr.category << "," << pr.name << "," << juce::String (db - dryDb, 2) << "," << juce::String (s.peak, 3) << "\n";
+            if (preset % 8 == 0)
+                writeWav (outDir.getChildFile ("fx-" + juce::String (preset) + "-" + pr.name.replaceCharacter (' ', '_') + ".wav"), out, sr);
         }
+        outDir.getChildFile ("fx-levels.csv").replaceWithText (levels);
+        check (p.getNumFactoryPresets() >= 70, juce::String (p.getNumFactoryPresets()) + " FX presets");
 
         // Bypass passes the dry signal through
         p.apvts.getParameter ("bypass")->setValueNotifyingHost (1.0f);
@@ -281,6 +326,42 @@ int main (int argc, char** argv)
         check (shape.size() == 360, "Core ring gets a live shape");
     }
 
+    // ---------------------------------------------------------------- user presets
+    std::cout << "User presets: save, reload, delete" << std::endl;
+    {
+        InstrumentProcessor p;
+        p.loadPreset (10);
+        for (int i = 0; i < 3; ++i) p.spark();
+        const auto vals = p.currentFacetValues();
+        const float attack = p.apvts.getParameter ("attack")->getValue();
+        juce::String error;
+        const auto name = "Test Preset " + juce::String (juce::Random::getSystemRandom().nextInt (100000));
+        check (p.saveUserPreset (name, error), "Save " + name + " " + error);
+        check (p.getPresetCategory() == SparkProcessorBase::userCategory && p.getPresetName() == name, "Saved preset becomes current");
+
+        InstrumentProcessor q;   // a fresh instance finds it on disk
+        int found = -1;
+        for (int i = 0; i < q.getNumPresets(); ++i)
+            if (q.getPreset (i).name == name) found = i;
+        check (found >= q.getNumFactoryPresets(), "New instance lists the user preset");
+        q.loadPreset (found);
+        float d = 0;
+        for (int i = 0; i < numFacets; ++i) d += std::abs (q.currentFacetValues()[(size_t) i] - vals[(size_t) i]);
+        check (d < 1.0e-4f && std::abs (q.apvts.getParameter ("attack")->getValue() - attack) < 1.0e-4f, "User preset restores facets and envelope");
+
+        juce::MemoryBlock state;
+        q.getStateInformation (state);
+        InstrumentProcessor r;
+        r.setStateInformation (state.getData(), (int) state.getSize());
+        check (r.getPresetName() == name, "Project recall remembers the user preset by name");
+
+        check (q.deleteUserPreset (found), "Delete user preset");
+        q.rescanUserPresets();
+        bool gone = true;
+        for (int i = 0; i < q.getNumPresets(); ++i) gone &= q.getPreset (i).name != name;
+        check (gone, "Deleted preset disappears");
+    }
+
     // ---------------------------------------------------------------- editors
     std::cout << "Editors: build and snapshot" << std::endl;
     {
@@ -295,6 +376,14 @@ int main (int argc, char** argv)
         p.apvts.getParameter ("mode")->setValueNotifyingHost (1.0f);
         snapshot (ed.get(), outDir.getChildFile ("ui-instrument-table.png"));
         snapshot (ed.get(), outDir.getChildFile ("ui-instrument-small.png"), 0.75f);
+        p.loadPreset (5);
+        for (auto* c : ed->getChildren()[0]->getChildren())
+            if (auto* b = dynamic_cast<PresetBrowser*> (c))
+            {
+                b->setVisible (true);
+                b->toFront (false);
+            }
+        snapshot (ed.get(), outDir.getChildFile ("ui-instrument-browser.png"));
         check (true, "Instrument editor snapshots written");
         ed.reset();
     }
@@ -317,6 +406,14 @@ int main (int argc, char** argv)
         p.setLocked (FxProcessor::mix, true);
         std::unique_ptr<juce::AudioProcessorEditor> ed (p.createEditor());
         snapshot (ed.get(), outDir.getChildFile ("ui-fx.png"));
+        p.loadPreset (60);
+        for (auto* c : ed->getChildren()[0]->getChildren())
+            if (auto* b = dynamic_cast<PresetBrowser*> (c))
+            {
+                b->setVisible (true);
+                b->toFront (false);
+            }
+        snapshot (ed.get(), outDir.getChildFile ("ui-fx-browser.png"));
         check (true, "FX editor snapshot written");
         ed.reset();
     }

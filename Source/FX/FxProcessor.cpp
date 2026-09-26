@@ -1,5 +1,6 @@
 #include "FxProcessor.h"
 #include "FxEditor.h"
+#include "Common/Presets.h"
 
 namespace spark
 {
@@ -19,18 +20,6 @@ namespace
         };
     }
 
-    std::vector<Preset> fxPresets()
-    {
-        return {
-            { "Shattered Gold",  { 0.4f, 0.55f, 0.3f, 0.5f, 0.25f, 0.72f, 0.48f, 0.58f }, {} },
-            { "Tape Halo",       { 0.7f, 0.6f, 0.15f, 0.5f, 0.0f, 0.55f, 0.55f, 0.45f }, {} },
-            { "Stutter Engine",  { 0.25f, 0.7f, 0.1f, 0.5f, 0.75f, 0.85f, 0.2f, 0.7f }, {} },
-            { "Cathedral Grain", { 0.85f, 0.8f, 0.6f, 0.5f, 0.0f, 0.6f, 0.85f, 0.65f }, {} },
-            { "Octave Shimmer",  { 0.5f, 0.65f, 0.35f, 0.75f, 0.1f, 0.8f, 0.7f, 0.5f }, {} },
-            { "Subtle Shine",    { 0.45f, 0.4f, 0.2f, 0.5f, 0.05f, 0.9f, 0.3f, 0.25f }, {} },
-        };
-    }
-
     void addFxParameters (SparkProcessorBase::Layout& layout)
     {
         layout.add (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { "freeze", 1 }, "Freeze", false));
@@ -47,7 +36,7 @@ FxProcessor::FxProcessor()
     : SparkProcessorBase (BusesProperties()
                               .withInput ("Input", juce::AudioChannelSet::stereo(), true)
                               .withOutput ("Output", juce::AudioChannelSet::stereo(), true),
-                          fxFacets(), addFxParameters, fxPresets(), "fx")
+                          fxFacets(), addFxParameters, makeFxPresets(), "fx")
 {
     for (int i = 0; i < numFacets; ++i)
         facet[i] = apvts.getRawParameterValue (getFacets()[(size_t) i].id);

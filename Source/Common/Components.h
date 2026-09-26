@@ -7,7 +7,7 @@
 
 namespace spark
 {
-enum class Icon { none, chevronLeft, chevronRight, settings, undo, star, lock, unlock, upload, snowflake };
+enum class Icon { none, chevronLeft, chevronRight, chevronDown, settings, undo, star, lock, unlock, upload, snowflake, cross, shuffle, search };
 juce::Path makeIcon (Icon, juce::Rectangle<float> area);
 
 // Rounded pill button in Spark's styles.
@@ -40,12 +40,17 @@ public:
     Header (SparkProcessorBase&, bool isFx);
     ~Header() override;
     std::function<void (juce::Component& anchor)> onSettings;
+    std::function<void()> onBrowse;
 
     void paint (juce::Graphics&) override;
     void resized() override;
+    void mouseMove (const juce::MouseEvent&) override;
+    void mouseExit (const juce::MouseEvent&) override;
+    void mouseUp (const juce::MouseEvent&) override;
 
 private:
     void changeListenerCallback (juce::ChangeBroadcaster*) override { repaint(); }
+    bool presetHover = false;
 
     SparkProcessorBase& processor;
     bool fx;
@@ -174,6 +179,63 @@ private:
     static constexpr int maxVisible = 10;
 };
 
+// Full preset browser: categories, search, tiles with "best for" hints, save and surprise.
+class PresetBrowser : public juce::Component,
+                      private juce::ChangeListener
+{
+public:
+    explicit PresetBrowser (SparkProcessorBase&);
+    ~PresetBrowser() override;
+
+    std::function<void()> onClose;
+    std::function<void()> onSave;
+    void refresh (bool jumpToCurrentCategory);
+
+    void paint (juce::Graphics&) override;
+    void resized() override;
+    void mouseUp (const juce::MouseEvent&) override;
+    void mouseMove (const juce::MouseEvent&) override;
+    void mouseExit (const juce::MouseEvent&) override;
+    bool keyPressed (const juce::KeyPress&) override;
+    void visibilityChanged() override;
+
+private:
+    class Tiles : public juce::Component
+    {
+    public:
+        explicit Tiles (PresetBrowser& o) : owner (o) {}
+        void paint (juce::Graphics&) override;
+        void mouseMove (const juce::MouseEvent&) override;
+        void mouseExit (const juce::MouseEvent&) override;
+        void mouseUp (const juce::MouseEvent&) override;
+        void mouseDoubleClick (const juce::MouseEvent&) override;
+        juce::Rectangle<int> tileBounds (int slot) const;
+        int slotAt (juce::Point<int>) const;
+        int requiredHeight (int count) const;
+        PresetBrowser& owner;
+        int hovered = -1;
+    };
+
+    void changeListenerCallback (juce::ChangeBroadcaster*) override;
+    void rebuildList();
+    juce::Rectangle<int> categoryRow (int i) const;
+    juce::Rectangle<int> listArea() const;
+    int countIn (const juce::String& category) const;
+
+    SparkProcessorBase& processor;
+    juce::StringArray categories;
+    juce::String selectedCategory;
+    std::vector<int> shown;
+    int hoveredCategory = -1;
+
+    juce::TextEditor search;
+    PillButton surprise { "SURPRISE ME", PillButton::Style::outline, Icon::shuffle };
+    PillButton save { "SAVE", PillButton::Style::goldOutline };
+    PillButton close { {}, PillButton::Style::outline, Icon::cross };
+    juce::Viewport viewport;
+    Tiles tiles { *this };
+};
+
 // Base editor shared by both plugins: scales a fixed 1120x720 design to the window,
 // and lays out the header, core, amounts, facets and lineage. Subclasses fill the left column.
 class SparkEditorBase : public juce::AudioProcessorEditor
@@ -195,6 +257,8 @@ protected:
     virtual void addExtraMenuItems (juce::PopupMenu&) {}
     void showMessage (const juce::String& title, const juce::String& text);
     SparkLookAndFeel& getSparkLookAndFeel() noexcept { return lookAndFeel; }
+    void setBrowserVisible (bool);
+    void promptToSavePreset();
 
     SparkProcessorBase& sparkProcessor;
 
@@ -211,6 +275,7 @@ private:
     AmountSlider mutate, chaos;
     FacetList facets;
     LineageStrip lineage;
+    PresetBrowser browser;
     juce::TooltipWindow tooltips { nullptr, 600 };
 };
 } // namespace spark

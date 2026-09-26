@@ -15,7 +15,7 @@ jobs:
     runs-on: macos-14
     timeout-minutes: 75
     env:
-      VERSION: 1.0.0
+      VERSION: 1.1.0
       # Optional signing. Add these repository secrets to get a signed, notarised installer:
       # DEVELOPER_ID_APP_P12, DEVELOPER_ID_INSTALLER_P12 (base64 .p12), P12_PASSWORD,
       # APP_SIGN_IDENTITY, INSTALLER_SIGN_IDENTITY, NOTARY_APPLE_ID, NOTARY_TEAM_ID, NOTARY_PASSWORD

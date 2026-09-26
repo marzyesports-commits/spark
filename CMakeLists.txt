@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(Spark VERSION 1.0.0 LANGUAGES C CXX)
+project(Spark VERSION 1.1.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -44,7 +44,9 @@ set(SPARK_COMMON_SOURCES
     Source/Common/Lineage.cpp
     Source/Common/SparkProcessorBase.cpp
     Source/Common/Components.cpp
-    Source/Common/Wavetable.cpp)
+    Source/Common/Wavetable.cpp
+    Source/Instrument/InstrumentPresets.cpp
+    Source/FX/FxPresets.cpp)
 
 function(spark_configure target)
     target_sources(${target} PRIVATE ${SPARK_COMMON_SOURCES})
