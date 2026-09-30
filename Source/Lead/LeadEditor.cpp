@@ -1139,7 +1139,7 @@ namespace
                       "LFOs, macros and the mod matrix: drag a handle onto a facet or knob",
                       "Riff: write and play lead lines", "The effects rack" };
         s.aboutTitle = "OBSDN";
-        s.aboutText = "Hooks on demand. Pick a sound, let the riff writer find the line, strike the stone until it's yours.";
+        s.aboutText = "A lead synth that helps start your ideas. Pick a key, press Generate, build on the riff, strike the stone until it's yours.";
         return s;
     }
 }

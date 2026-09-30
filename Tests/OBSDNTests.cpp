@@ -3,6 +3,7 @@
 #include <juce_audio_utils/juce_audio_utils.h>
 #include "Lead/LeadProcessor.h"
 #include "Lead/LeadEditor.h"
+#include "Instrument/FactorySounds.h"
 
 using namespace spark;
 
@@ -533,6 +534,23 @@ int main (int argc, char** argv)
     }
 
     // ------------------------------------------------------------------ sound
+    std::cout << "OBSDN: sound library" << std::endl;
+    {
+        const auto& lib = factory::sounds();
+        bool allDecode = true;
+        for (const auto& snd : lib)
+        {
+            juce::AudioBuffer<float> audio; double rate = 0;
+            if (! factory::decode (snd.id, audio, rate) || audio.getNumSamples() < 1000) { allDecode = false; std::cout << "    can't decode " << snd.id << std::endl; }
+        }
+        check (lib.size() >= 20 && lib.size() <= 25, "the library is a focused set of lead sounds (" + juce::String ((int) lib.size()) + ")");
+        check (allDecode, "every library sound decodes");
+        bool presetsFound = true;
+        for (const auto& pr : makeLeadPresets().presets)
+            if (pr.sound.isNotEmpty() && factory::find (pr.sound) == nullptr) { presetsFound = false; std::cout << "    missing " << pr.sound << std::endl; }
+        check (presetsFound, "every preset's sound is in the library");
+    }
+
     std::cout << "OBSDN: presets" << std::endl;
     {
         LeadProcessor p;

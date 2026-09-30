@@ -1,0 +1,188 @@
+{
+ "sounds": [
+  {
+   "id": "lead_saw",
+   "name": "Saw Lead",
+   "category": "Leads",
+   "root": 60,
+   "table": 0,
+   "seconds": 2.0
+  },
+  {
+   "id": "lead_square",
+   "name": "Square Lead",
+   "category": "Leads",
+   "root": 60,
+   "table": 0,
+   "seconds": 2.0
+  },
+  {
+   "id": "lead_sync",
+   "name": "Sync Lead",
+   "category": "Leads",
+   "root": 60,
+   "table": 0,
+   "seconds": 2.0
+  },
+  {
+   "id": "lead_scream",
+   "name": "Screamer",
+   "category": "Leads",
+   "root": 60,
+   "table": 0,
+   "seconds": 2.0
+  },
+  {
+   "id": "lead_chip",
+   "name": "Chip Pulse",
+   "category": "Leads",
+   "root": 60,
+   "table": 0,
+   "seconds": 1.5
+  },
+  {
+   "id": "lead_flute",
+   "name": "Breath Flute",
+   "category": "Leads",
+   "root": 60,
+   "table": 0,
+   "seconds": 2.2
+  },
+  {
+   "id": "lead_whistle",
+   "name": "Whistle",
+   "category": "Leads",
+   "root": 72,
+   "table": 0,
+   "seconds": 2.0
+  },
+  {
+   "id": "wt_basic",
+   "name": "Basic Shapes",
+   "category": "Wavetable",
+   "root": 60,
+   "table": 2048,
+   "seconds": 2.97
+  },
+  {
+   "id": "wt_soft",
+   "name": "Soft Saws",
+   "category": "Wavetable",
+   "root": 60,
+   "table": 2048,
+   "seconds": 2.97
+  },
+  {
+   "id": "wt_harmonic",
+   "name": "Harmonic Stack",
+   "category": "Wavetable",
+   "root": 60,
+   "table": 2048,
+   "seconds": 2.97
+  },
+  {
+   "id": "wt_pwm",
+   "name": "Pulse Width",
+   "category": "Wavetable",
+   "root": 60,
+   "table": 2048,
+   "seconds": 2.97
+  },
+  {
+   "id": "wt_fm",
+   "name": "FM Sweep",
+   "category": "Wavetable",
+   "root": 60,
+   "table": 2048,
+   "seconds": 2.97
+  },
+  {
+   "id": "wt_formant",
+   "name": "Formant Sweep",
+   "category": "Wavetable",
+   "root": 60,
+   "table": 2048,
+   "seconds": 2.97
+  },
+  {
+   "id": "wt_digital",
+   "name": "Digital Steps",
+   "category": "Wavetable",
+   "root": 60,
+   "table": 2048,
+   "seconds": 2.97
+  },
+  {
+   "id": "wt_fold",
+   "name": "Wavefolder",
+   "category": "Wavetable",
+   "root": 60,
+   "table": 2048,
+   "seconds": 2.97
+  },
+  {
+   "id": "vox_ah",
+   "name": "Vowel Ah",
+   "category": "Vocal",
+   "root": 60,
+   "table": 0,
+   "seconds": 2.2
+  },
+  {
+   "id": "vox_oo",
+   "name": "Vowel Oo",
+   "category": "Vocal",
+   "root": 60,
+   "table": 0,
+   "seconds": 2.2
+  },
+  {
+   "id": "vox_breath",
+   "name": "Breath",
+   "category": "Vocal",
+   "root": 60,
+   "table": 0,
+   "seconds": 2.0
+  },
+  {
+   "id": "pad_choir",
+   "name": "Choir Aah",
+   "category": "Vocal",
+   "root": 60,
+   "table": 0,
+   "seconds": 4.0
+  },
+  {
+   "id": "key_bell",
+   "name": "Bell",
+   "category": "Keys & Plucks",
+   "root": 60,
+   "table": 0,
+   "seconds": 3.5
+  },
+  {
+   "id": "key_musicbox",
+   "name": "Music Box",
+   "category": "Keys & Plucks",
+   "root": 72,
+   "table": 0,
+   "seconds": 2.5
+  },
+  {
+   "id": "key_kalimba",
+   "name": "Kalimba",
+   "category": "Keys & Plucks",
+   "root": 60,
+   "table": 0,
+   "seconds": 2.0
+  },
+  {
+   "id": "key_guitar",
+   "name": "Nylon Pluck",
+   "category": "Keys & Plucks",
+   "root": 60,
+   "table": 0,
+   "seconds": 2.0
+  }
+ ]
+}

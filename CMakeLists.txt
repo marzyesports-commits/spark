@@ -44,6 +44,17 @@ file(GLOB SPARK_SOUND_FILES ${CMAKE_CURRENT_SOURCE_DIR}/Resources/Sounds/*.flac 
 juce_add_binary_data(SparkSounds HEADER_NAME SparkSoundData.h NAMESPACE SparkSoundData SOURCES ${SPARK_SOUND_FILES})
 set_target_properties(SparkSounds PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
+# OBSDN ships a smaller, lead-focused set of the same sounds (Resources/OBSDN/manifest.json lists them)
+file(READ ${CMAKE_CURRENT_SOURCE_DIR}/Resources/OBSDN/manifest.json OBSDN_MANIFEST)
+string(REGEX MATCHALL "\"id\": \"[a-z0-9_]+\"" OBSDN_SOUND_IDS "${OBSDN_MANIFEST}")
+set(OBSDN_SOUND_FILES ${CMAKE_CURRENT_SOURCE_DIR}/Resources/OBSDN/manifest.json)
+foreach(entry ${OBSDN_SOUND_IDS})
+    string(REGEX REPLACE "\"id\": \"([a-z0-9_]+)\"" "\\1" sound_id "${entry}")
+    list(APPEND OBSDN_SOUND_FILES ${CMAKE_CURRENT_SOURCE_DIR}/Resources/Sounds/${sound_id}.flac)
+endforeach()
+juce_add_binary_data(OBSDNSounds HEADER_NAME SparkSoundData.h NAMESPACE SparkSoundData SOURCES ${OBSDN_SOUND_FILES})
+set_target_properties(OBSDNSounds PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
 # Shared by every Spark plugin
 set(SPARK_SHARED_SOURCES
     Source/Common/SparkLookAndFeel.cpp
@@ -127,7 +138,7 @@ spark_configure(Spark)
 target_link_libraries(Spark PRIVATE SparkSounds)
 
 # ---------- OBSDN (lead synth + riff writer, jade theme) ----------
-set(OBSDN_VERSION 0.4.1)
+set(OBSDN_VERSION 0.5.0)
 juce_add_plugin(OBSDN
     VERSION ${OBSDN_VERSION}
     COMPANY_NAME "Spark Audio"
@@ -149,7 +160,7 @@ juce_add_plugin(OBSDN
     MICROPHONE_PERMISSION_ENABLED FALSE)
 target_sources(OBSDN PRIVATE ${OBSDN_SOURCES})
 spark_configure(OBSDN)
-target_link_libraries(OBSDN PRIVATE SparkSounds)
+target_link_libraries(OBSDN PRIVATE OBSDNSounds)
 target_compile_definitions(OBSDN PRIVATE SPARK_THEME_OBSDN=1)
 
 # ---------- Offline tests (not shipped) ----------
@@ -176,7 +187,7 @@ if(SPARK_BUILD_TESTS)
     target_include_directories(OBSDNTests PRIVATE Source)
     target_compile_definitions(OBSDNTests PRIVATE
         JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 SPARK_TESTS=1 JUCE_MODAL_LOOPS_PERMITTED=1 SPARK_THEME_OBSDN=1)
-    target_link_libraries(OBSDNTests PRIVATE SparkAssets SparkSounds
+    target_link_libraries(OBSDNTests PRIVATE SparkAssets OBSDNSounds
         juce::juce_audio_utils juce::juce_audio_formats juce::juce_dsp
         juce::juce_recommended_config_flags)
 endif()
