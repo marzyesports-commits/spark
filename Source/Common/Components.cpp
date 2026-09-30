@@ -588,7 +588,7 @@ void CoreView::burst()
         float from = 70.0f;
         if (brand::isObsdn)
         {
-            // the crystal discharges from its points and shoulders
+            // the hex ring discharges from its corners
             const auto& pts = gemPoints();
             const auto& pt = pts[(size_t) (((int) (base * 10.0f) + k) % (int) pts.size())];
             ang = std::atan2 (pt.x, -pt.y);

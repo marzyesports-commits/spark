@@ -150,18 +150,33 @@ juce::Path makeStarPath (juce::Rectangle<float> a)
     return p;
 }
 
+namespace
+{
+    // a pointy-topped hexagon's corners, in units of its radius (x right, y down)
+    juce::Point<float> hexCorner (int k)
+    {
+        const float a = juce::MathConstants<float>::pi / 3.0f * (float) k;
+        return { std::sin (a), -std::cos (a) };
+    }
+}
+
 juce::Path makeGemPath (juce::Rectangle<float> a)
 {
-    // a double-pointed crystal: tall and narrow, sharp at both ends
-    const float cx = a.getCentreX(), y = a.getY(), w = a.getWidth(), h = a.getHeight();
+    // the hex ring: a hexagonal crystal slice with a hollow centre (the O of OBSDN)
+    const auto c = a.getCentre();
+    const float r = juce::jmin (a.getWidth(), a.getHeight()) * 0.5f;
     juce::Path p;
-    p.startNewSubPath (cx, y);
-    p.lineTo (cx + w * 0.26f, y + h * 0.33f);
-    p.lineTo (cx + w * 0.26f, y + h * 0.67f);
-    p.lineTo (cx, y + h);
-    p.lineTo (cx - w * 0.26f, y + h * 0.67f);
-    p.lineTo (cx - w * 0.26f, y + h * 0.33f);
-    p.closeSubPath();
+    for (int pass = 0; pass < 2; ++pass)
+    {
+        const float rr = pass == 0 ? r : r * 0.48f;
+        for (int k = 0; k < 6; ++k)
+        {
+            const auto pt = c + hexCorner (pass == 0 ? k : 5 - k) * rr;
+            if (k == 0) p.startNewSubPath (pt); else p.lineTo (pt);
+        }
+        p.closeSubPath();
+    }
+    p.setUsingNonZeroWinding (false);
     return p;
 }
 
@@ -172,9 +187,7 @@ juce::Path makeLogoPath (juce::Rectangle<float> a)
 
 const std::array<juce::Point<float>, 6>& gemPoints()
 {
-    // outline of the crystal in units of its radius (x right, y down): top, right shoulders, bottom, left shoulders
-    static const std::array<juce::Point<float>, 6> p { { { 0.03f, -1.0f }, { 0.42f, -0.34f }, { 0.42f, 0.34f },
-                                                         { -0.03f, 1.0f }, { -0.42f, 0.34f }, { -0.42f, -0.34f } } };
+    static const std::array<juce::Point<float>, 6> p { { hexCorner (0), hexCorner (1), hexCorner (2), hexCorner (3), hexCorner (4), hexCorner (5) } };
     return p;
 }
 
@@ -183,75 +196,59 @@ void drawGem (juce::Graphics& g, juce::Rectangle<float> area, float lift)
     using namespace colours;
     const auto c = area.getCentre();
     const float R = juce::jmin (area.getWidth(), area.getHeight()) * 0.5f;
+    const float inner = 0.52f;
     const juce::Colour deep (0xff03211a), stone (0xff0c7050);
     lift = juce::jlimit (0.0f, 1.0f, lift);
-    auto P = [&] (float x, float y) { return juce::Point<float> (c.x + x * R, c.y + y * R); };
-
-    // soft jade halo behind the crystal
-    g.setGradientFill (juce::ColourGradient (gold.withAlpha (0.20f + 0.18f * lift), c, gold.withAlpha (0.0f), P (1.2f, 0.0f), true));
-    g.fillEllipse (juce::Rectangle<float> (R * 2.4f, R * 2.4f).withCentre (c));
-
-    // Columns across the front: left edge, left ridge, right ridge, right edge. The inner ridges run a
-    // little further up and down than the edges, so the ends split into facets that meet at the points.
-    const float xs[4] { -0.42f, -0.13f, 0.19f, 0.42f };
-    const float shoulder[4] { 0.34f, 0.48f, 0.46f, 0.34f };
-    const auto top = P (0.03f, -1.0f), bottom = P (-0.03f, 1.0f);
-    // brightness of each face: light comes from the top left
-    const float body[3] { 0.62f, 0.44f, 0.20f };
-    const float cap[3] { 0.86f, 0.66f, 0.36f };
-    const float foot[3] { 0.34f, 0.22f, 0.08f };
+    auto P = [&] (juce::Point<float> unit, float r) { return c + unit * (R * r); };
     auto tone = [&] (float v)
     {
         v = juce::jlimit (0.0f, 1.0f, v + 0.18f * lift);
         return deep.interpolatedWith (stone, juce::jmin (1.0f, v * 1.35f)).interpolatedWith (goldHi, juce::jmax (0.0f, v - 0.7f) * 1.8f);
     };
 
+    // soft jade halo
+    g.setGradientFill (juce::ColourGradient (gold.withAlpha (0.20f + 0.18f * lift), c, gold.withAlpha (0.0f), c + juce::Point<float> (R * 1.2f, 0.0f), true));
+    g.fillEllipse (juce::Rectangle<float> (R * 2.4f, R * 2.4f).withCentre (c));
+
+    // six bevelled faces, lit from the top left
+    const juce::Point<float> light (-0.72f, -0.70f);
     juce::Path edges;
-    for (int i = 0; i < 3; ++i)
+    for (int k = 0; k < 6; ++k)
     {
-        const auto tl = P (xs[i], -shoulder[i]), tr = P (xs[i + 1], -shoulder[i + 1]);
-        const auto bl = P (xs[i], shoulder[i]), br = P (xs[i + 1], shoulder[i + 1]);
+        const auto a0 = hexCorner (k), a1 = hexCorner ((k + 1) % 6);
+        const auto m = (a0 + a1) * 0.5f;
+        const float facing = 0.5f + 0.5f * (m.x * light.x + m.y * light.y) / juce::jmax (1.0e-3f, m.getDistanceFromOrigin());
         juce::Path face;
-        face.addQuadrilateral (tl.x, tl.y, tr.x, tr.y, br.x, br.y, bl.x, bl.y);
-        g.setGradientFill (juce::ColourGradient (tone (body[i] + 0.08f), tl, tone (body[i] - 0.12f), bl, false));
+        face.addQuadrilateral (P (a0, 1.0f).x, P (a0, 1.0f).y, P (a1, 1.0f).x, P (a1, 1.0f).y,
+                               P (a1, inner).x, P (a1, inner).y, P (a0, inner).x, P (a0, inner).y);
+        g.setColour (tone (0.08f + 0.78f * facing));
         g.fillPath (face);
-
-        juce::Path upper;
-        upper.addTriangle (top, tr, tl);
-        g.setColour (tone (cap[i]));
-        g.fillPath (upper);
-
-        juce::Path lower;
-        lower.addTriangle (bl, br, bottom);
-        g.setColour (tone (foot[i]));
-        g.fillPath (lower);
-
-        edges.startNewSubPath (top); edges.lineTo (tl);
-        edges.startNewSubPath (tl); edges.lineTo (bl);
-        edges.startNewSubPath (bl); edges.lineTo (bottom);
-        edges.startNewSubPath (tl); edges.lineTo (tr);
-        edges.startNewSubPath (bl); edges.lineTo (br);
+        edges.startNewSubPath (P (a0, 1.0f)); edges.lineTo (P (a0, inner));
     }
-    edges.startNewSubPath (top); edges.lineTo (P (xs[3], -shoulder[3]));
-    edges.lineTo (P (xs[3], shoulder[3]));
-    edges.lineTo (bottom);
-    g.setColour (goldHi.withAlpha (0.30f + 0.2f * lift));
-    g.strokePath (edges, juce::PathStrokeType (0.8f));
 
+    // the hollow centre: dark, lit faintly from below as if looking through the stone
+    juce::Path hole;
+    for (int k = 0; k < 6; ++k)
+        if (k == 0) hole.startNewSubPath (P (hexCorner (k), inner)); else hole.lineTo (P (hexCorner (k), inner));
+    hole.closeSubPath();
+    g.setGradientFill (juce::ColourGradient (bg, c + juce::Point<float> (-R * 0.3f, -R * 0.4f),
+                                             deep.interpolatedWith (stone, 0.35f + 0.2f * lift), c + juce::Point<float> (R * 0.3f, R * 0.45f), false));
+    g.fillPath (hole);
+
+    g.setColour (goldHi.withAlpha (0.28f + 0.2f * lift));
+    g.strokePath (edges, juce::PathStrokeType (0.9f));
+    g.setColour (goldHi.withAlpha (0.45f + 0.25f * lift));
+    g.strokePath (hole, juce::PathStrokeType (1.0f, juce::PathStrokeType::mitered));
     juce::Path outline;
-    const auto& pts = gemPoints();
-    for (size_t i = 0; i < pts.size(); ++i)
-        if (i == 0) outline.startNewSubPath (P (pts[i].x, pts[i].y)); else outline.lineTo (P (pts[i].x, pts[i].y));
+    for (int k = 0; k < 6; ++k)
+        if (k == 0) outline.startNewSubPath (P (hexCorner (k), 1.0f)); else outline.lineTo (P (hexCorner (k), 1.0f));
     outline.closeSubPath();
-    g.setColour (goldHi.withAlpha (0.60f + 0.3f * lift));
-    g.strokePath (outline, juce::PathStrokeType (1.2f, juce::PathStrokeType::mitered));
+    g.setColour (goldHi.withAlpha (0.65f + 0.3f * lift));
+    g.strokePath (outline, juce::PathStrokeType (1.3f, juce::PathStrokeType::mitered));
 
-    // a glint high on the lit face, and a bright line down the leading ridge
-    g.setGradientFill (juce::ColourGradient (flash.withAlpha (0.55f + 0.3f * lift), P (-0.13f, -0.48f),
-                                             flash.withAlpha (0.0f), P (-0.13f, 0.40f), false));
-    g.fillRect (juce::Rectangle<float> (P (-0.13f, -0.48f), P (-0.13f, 0.40f)).expanded (0.6f, 0.0f));
+    // a glint on the lit face
     g.setColour (flash.withAlpha (0.6f + 0.35f * lift));
-    g.fillPath (makeStarPath (juce::Rectangle<float> (R * 0.30f, R * 0.30f).withCentre (P (-0.24f, -0.46f))));
+    g.fillPath (makeStarPath (juce::Rectangle<float> (R * 0.26f, R * 0.26f).withCentre (P (juce::Point<float> (-0.62f, -0.44f), 1.0f))));
 }
 
 juce::Path makeFivePointStar (juce::Rectangle<float> a)

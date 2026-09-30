@@ -91,9 +91,9 @@ void drawSectionLabel (juce::Graphics&, const juce::String& text, juce::Rectangl
                        juce::Justification = juce::Justification::centredLeft,
                        juce::Colour = colours::text2);
 juce::Path makeStarPath (juce::Rectangle<float> area);      // the Spark four-point star
-juce::Path makeGemPath (juce::Rectangle<float> area);       // OBSDN's crystal: tall, pointed at both ends
+juce::Path makeGemPath (juce::Rectangle<float> area);       // OBSDN's hex ring mark (even-odd: the centre is hollow)
 juce::Path makeLogoPath (juce::Rectangle<float> area);      // the brand mark: star (Spark) or gem (OBSDN)
-// OBSDN's centrepiece: a faceted jade crystal standing upright, lit from the top left.
+// OBSDN's centrepiece: a bevelled jade hex ring (the O of OBSDN), lit from the top left.
 // 'lift' 0..1 brightens it (hover, a strike). Its outline corners, in units of its radius, are gemPoints().
 void drawGem (juce::Graphics&, juce::Rectangle<float> area, float lift);
 const std::array<juce::Point<float>, 6>& gemPoints();
