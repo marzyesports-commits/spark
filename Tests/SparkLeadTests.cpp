@@ -133,6 +133,49 @@ int main (int argc, char** argv)
     outDir.createDirectory();
     const double sr = 48000.0;
 
+    // Demo: SparkRiff following a chord progression (A minor: Am F C G) in several styles, at 124 bpm
+    if (argc > 2 && juce::String (argv[2]) == "demo")
+    {
+        struct Section { const char* preset; int style; juce::uint32 seed; float density; };
+        const Section sections[] { { "Gold Supersaw", riff::trance, 11, 0.45f }, { "Future Glide", riff::future, 5, 0.55f },
+                                   { "Drill Slide", riff::drill, 21, 0.45f }, { "Afro Flute", riff::afro, 8, 0.55f },
+                                   { "8-bit Hero", riff::chip, 3, 0.5f } };
+        const double bpm = 124.0, bar = 240.0 / bpm;
+        const int roots[] { 57, 53, 60, 55 };   // A3 F3 C4 G3
+        int index = 0;
+        for (const auto& sec : sections)
+        {
+            LeadProcessor p;
+            for (int i = 0; i < p.getNumFactoryPresets(); ++i)
+                if (p.getPreset (i).name == sec.preset) p.loadPreset (i);
+            setReal (p, "riffOn", 1.0f);
+            setReal (p, "riffKey", 9.0f);
+            setReal (p, "riffScale", 1.0f);
+            setReal (p, "riffStyle", (float) sec.style);
+            setReal (p, "riffBars", 0.0f);
+            setReal (p, "riffDensity", sec.density);
+            pump (300);
+            riff::Settings st = p.riffSettings();
+            p.setRiff (riff::generate (st, sec.seed));
+            HostPlayHead host;
+            host.bpm = bpm;
+            host.playing = true;
+            p.setPlayHead (&host);
+            p.prepareToPlay (sr, 256);
+            std::vector<Ev> ev;
+            for (int b = 0; b < 8; ++b)
+            {
+                const int k = roots[b % 4];
+                ev.push_back ({ juce::jmax (0.0, b * bar - 0.02), juce::MidiMessage::noteOn (1, k, 0.9f) });
+                ev.push_back ({ (b + 1) * bar + (b == 7 ? -0.03 : 0.02), juce::MidiMessage::noteOff (1, k) });
+            }
+            auto out = render (p, sr, ev, 8 * bar + 2.0, &host);
+            writeWav (outDir.getChildFile ("demo-" + juce::String (index++) + ".wav"), out, sr);
+            std::cout << sec.preset << ": " << p.getRiff().notes.size() << " notes" << std::endl;
+        }
+        return 0;
+    }
+
     // ------------------------------------------------------------------ riff writer
     std::cout << "SparkRiff: writing riffs" << std::endl;
     {
