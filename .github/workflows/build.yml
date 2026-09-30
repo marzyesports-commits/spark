@@ -12,7 +12,7 @@ permissions:
 
 env:
   VERSION: 1.5.0        # Spark. A "-dev" version builds and tests but doesn't publish; a version that's already released isn't re-published
-  LEAD_VERSION: 0.1.0   # SparkLead (published as a pre-release while it's in beta)
+  OBSDN_VERSION: 0.2.0  # OBSDN (published as a pre-release while it's in beta)
 
 jobs:
   macos:
@@ -65,10 +65,10 @@ jobs:
 
       - name: Build
         run: |
-          cmake --build build --config Release --target Spark_All SparkLead_All SparkTests SparkLeadTests -- -quiet -jobs 3
+          cmake --build build --config Release --target Spark_All OBSDN_All SparkTests OBSDNTests -- -quiet -jobs 3
           lipo -info "build/Spark_artefacts/Release/VST3/Spark.vst3/Contents/MacOS/Spark"
           lipo -info "build/Spark_artefacts/Release/AU/Spark.component/Contents/MacOS/Spark"
-          lipo -info "build/SparkLead_artefacts/Release/VST3/SparkLead.vst3/Contents/MacOS/SparkLead"
+          lipo -info "build/OBSDN_artefacts/Release/VST3/OBSDN.vst3/Contents/MacOS/OBSDN"
 
       - name: Package installer
         env:
@@ -79,7 +79,7 @@ jobs:
           NOTARY_PASSWORD: ${{ secrets.NOTARY_PASSWORD }}
         run: |
           bash packaging/macos/make-installer.sh "$VERSION"
-          PRODUCT=SparkLead OUT_DIR=dist-lead bash packaging/macos/make-installer.sh "$LEAD_VERSION"
+          PRODUCT=OBSDN OUT_DIR=dist-obsdn bash packaging/macos/make-installer.sh "$OBSDN_VERSION"
 
       - name: Upload installer
         uses: actions/upload-artifact@v4
@@ -88,34 +88,34 @@ jobs:
           path: dist/*
           if-no-files-found: error
 
-      - name: Upload SparkLead installer
+      - name: Upload OBSDN installer
         uses: actions/upload-artifact@v4
         with:
-          name: SparkLead-mac
-          path: dist-lead/*
+          name: OBSDN-mac
+          path: dist-obsdn/*
           if-no-files-found: error
 
       - name: Offline tests (audio, randomiser, wavetables, UI snapshots)
         run: |
           ./build/SparkTests_artefacts/Release/SparkTests "$PWD/test-output"
-          ./build/SparkLeadTests_artefacts/Release/SparkLeadTests "$PWD/test-output/lead"
+          ./build/OBSDNTests_artefacts/Release/OBSDNTests "$PWD/test-output/obsdn"
 
       - name: Validate Audio Units (auval)
         run: |
           mkdir -p ~/Library/Audio/Plug-Ins/Components
           cp -R "build/Spark_artefacts/Release/AU/Spark.component" ~/Library/Audio/Plug-Ins/Components/
-          cp -R "build/SparkLead_artefacts/Release/AU/SparkLead.component" ~/Library/Audio/Plug-Ins/Components/
+          cp -R "build/OBSDN_artefacts/Release/AU/OBSDN.component" ~/Library/Audio/Plug-Ins/Components/
           killall -9 AudioComponentRegistrar || true
           sleep 2
           auval -a | grep -i spark || true
           auval -v aumu Spk1 Sprk
-          auval -v aumu SpLd Sprk
+          auval -v aumu Obsd Sprk
 
       - name: Validate VST3 (pluginval)
         run: |
           curl -sSfL -o pluginval.zip https://github.com/Tracktion/pluginval/releases/latest/download/pluginval_macOS.zip
           unzip -q pluginval.zip
-          for p in "build/Spark_artefacts/Release/VST3/Spark.vst3" "build/SparkLead_artefacts/Release/VST3/SparkLead.vst3"; do
+          for p in "build/Spark_artefacts/Release/VST3/Spark.vst3" "build/OBSDN_artefacts/Release/VST3/OBSDN.vst3"; do
             ./pluginval.app/Contents/MacOS/pluginval --strictness-level 8 --validate-in-process --timeout-ms 300000 "$p"
           done
 
@@ -126,7 +126,7 @@ jobs:
           name: test-output-mac
           path: |
             test-output/*.png
-            test-output/lead/*.png
+            test-output/obsdn/*.png
           if-no-files-found: ignore
 
   windows:
@@ -152,7 +152,7 @@ jobs:
         run: cmake -B build -G "Visual Studio 17 2022" -A x64 -DSPARK_BUILD_TESTS=ON
 
       - name: Build
-        run: cmake --build build --config Release --target Spark_VST3 Spark_Standalone SparkTests SparkLead_VST3 SparkLead_Standalone SparkLeadTests --parallel 4
+        run: cmake --build build --config Release --target Spark_VST3 Spark_Standalone SparkTests OBSDN_VST3 OBSDN_Standalone OBSDNTests --parallel 4
 
       - name: Package installer
         shell: pwsh
@@ -180,23 +180,23 @@ jobs:
             Remove-Item -Recurse -Force $zip
           } catch { Fail ("Zip failed: " + $_) }
 
-          # SparkLead
-          $out = & $iscc "/DAppVersion=$env:LEAD_VERSION" packaging\windows\sparklead.iss 2>&1
-          if ($LASTEXITCODE -ne 0) { Fail ("ISCC (SparkLead) failed: " + (($out | Select-Object -Last 12) -join ' | ')) }
-          New-Item -ItemType Directory -Force dist-lead | Out-Null
-          Move-Item -Force "dist\SparkLead-$env:LEAD_VERSION-Windows-Setup.exe" dist-lead
-          $zip = "dist-lead\SparkLead-$env:LEAD_VERSION-Windows-plugins"
+          # OBSDN
+          $out = & $iscc "/DAppVersion=$env:OBSDN_VERSION" packaging\windows\obsdn.iss 2>&1
+          if ($LASTEXITCODE -ne 0) { Fail ("ISCC (OBSDN) failed: " + (($out | Select-Object -Last 12) -join ' | ')) }
+          New-Item -ItemType Directory -Force dist-obsdn | Out-Null
+          Move-Item -Force "dist\OBSDN-$env:OBSDN_VERSION-Windows-Setup.exe" dist-obsdn
+          $zip = "dist-obsdn\OBSDN-$env:OBSDN_VERSION-Windows-plugins"
           try {
             New-Item -ItemType Directory -Force "$zip\VST3", "$zip\Apps" | Out-Null
-            Copy-Item -Recurse -Force "build\SparkLead_artefacts\Release\VST3\SparkLead.vst3" "$zip\VST3"
-            Copy-Item -Force "build\SparkLead_artefacts\Release\Standalone\SparkLead.exe" "$zip\Apps"
-            Push-Location dist-lead
-            & 7z a -tzip "SparkLead-$env:LEAD_VERSION-Windows-plugins.zip" "SparkLead-$env:LEAD_VERSION-Windows-plugins" | Out-Null
+            Copy-Item -Recurse -Force "build\OBSDN_artefacts\Release\VST3\OBSDN.vst3" "$zip\VST3"
+            Copy-Item -Force "build\OBSDN_artefacts\Release\Standalone\OBSDN.exe" "$zip\Apps"
+            Push-Location dist-obsdn
+            & 7z a -tzip "OBSDN-$env:OBSDN_VERSION-Windows-plugins.zip" "OBSDN-$env:OBSDN_VERSION-Windows-plugins" | Out-Null
             Pop-Location
             if ($LASTEXITCODE -ne 0) { throw "7z exited with $LASTEXITCODE" }
             Remove-Item -Recurse -Force $zip
-          } catch { Fail ("SparkLead zip failed: " + $_) }
-          Get-ChildItem dist, dist-lead
+          } catch { Fail ("OBSDN zip failed: " + $_) }
+          Get-ChildItem dist, dist-obsdn
 
       - name: Upload installer
         uses: actions/upload-artifact@v4
@@ -205,23 +205,23 @@ jobs:
           path: dist/*
           if-no-files-found: error
 
-      - name: Upload SparkLead installer
+      - name: Upload OBSDN installer
         uses: actions/upload-artifact@v4
         with:
-          name: SparkLead-windows
-          path: dist-lead/*
+          name: OBSDN-windows
+          path: dist-obsdn/*
           if-no-files-found: error
 
       - name: Offline tests (audio, randomiser, wavetables, UI snapshots)
         run: |
           ./build/SparkTests_artefacts/Release/SparkTests.exe "$PWD/test-output"
-          ./build/SparkLeadTests_artefacts/Release/SparkLeadTests.exe "$PWD/test-output/lead"
+          ./build/OBSDNTests_artefacts/Release/OBSDNTests.exe "$PWD/test-output/obsdn"
 
       - name: Validate VST3 (pluginval)
         run: |
           curl -sSfL -o pluginval.zip https://github.com/Tracktion/pluginval/releases/latest/download/pluginval_Windows.zip
           unzip -q pluginval.zip
-          for p in "build/Spark_artefacts/Release/VST3/Spark.vst3" "build/SparkLead_artefacts/Release/VST3/SparkLead.vst3"; do
+          for p in "build/Spark_artefacts/Release/VST3/Spark.vst3" "build/OBSDN_artefacts/Release/VST3/OBSDN.vst3"; do
             ./pluginval.exe --strictness-level 8 --validate-in-process --timeout-ms 300000 "$p"
           done
 
@@ -232,7 +232,7 @@ jobs:
           name: test-output-windows
           path: |
             test-output/*.png
-            test-output/lead/*.png
+            test-output/obsdn/*.png
           if-no-files-found: ignore
 
   release:
@@ -252,8 +252,8 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          pattern: SparkLead-*
-          path: dist-lead
+          pattern: OBSDN-*
+          path: dist-obsdn
           merge-multiple: true
 
       - name: Is this Spark version already released?
@@ -288,21 +288,21 @@ jobs:
             The `-plugins.zip` files hold the same plugins if you'd rather install them by hand.
           files: dist/*
 
-      - name: Publish SparkLead beta
-        if: ${{ !contains(env.LEAD_VERSION, '-dev') }}
+      - name: Publish OBSDN beta
+        if: ${{ !contains(env.OBSDN_VERSION, '-dev') }}
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: sparklead-v${{ env.LEAD_VERSION }}
-          name: SparkLead ${{ env.LEAD_VERSION }} (beta)
+          tag_name: obsdn-v${{ env.OBSDN_VERSION }}
+          name: OBSDN ${{ env.OBSDN_VERSION }} (beta)
           target_commitish: ${{ github.sha }}
           prerelease: true
           make_latest: false
           body: |
-            **SparkLead** (beta): a lead synth with **SparkRiff**. Up to 7-voice unison wavetable oscillators, a second oscillator, sub and breath, a filter with its own envelope, delayed vibrato, scoops, fall-offs and glide, the full Spark effects rack, and 42 presets across Supersaw, Future, Drill & Trap, Afro & Amapiano, Retro 80s, Chip and Classic.
+            **OBSDN** (beta): a lead synth that writes its own riffs. Up to 7-voice unison wavetable oscillators, a second oscillator, sub and breath, a filter with its own envelope, delayed vibrato, scoops, fall-offs and glide, a 7-effect rack, and 42 presets across Supersaw, Future, Drill & Trap, Afro & Amapiano, Retro 80s, Chip and Classic. Strike the jade stone to roll new variations.
 
-            **SparkRiff** writes lead lines: pick a key, scale and style (Pop, Trance, Future, Drill, Afro, Chip, Anthem), press Generate, then hold a key to play the riff in time with your DAW. Mutate, Rhythm and Answer rework it; drag **DRAG MIDI** onto a track to keep it.
+            **RIFF** writes lead lines: pick a key, scale and style (Pop, Trance, Future, Drill, Afro, Chip, Anthem), press Generate, then hold a key to play the riff in time with your DAW. Mutate, Rhythm and Answer rework it; drag **DRAG MIDI** onto a track to keep it.
 
-            **Mac** (macOS 11+, Apple Silicon and Intel): download **SparkLead-${{ env.LEAD_VERSION }}-macOS.pkg**, right-click it, choose **Open**, then **Open** again.
+            **Mac** (macOS 11+, Apple Silicon and Intel): download **OBSDN-${{ env.OBSDN_VERSION }}-macOS.pkg**, right-click it, choose **Open**, then **Open** again.
 
-            **Windows** (10 and 11, 64-bit): download **SparkLead-${{ env.LEAD_VERSION }}-Windows-Setup.exe**. If SmartScreen appears, click **More info**, then **Run anyway**.
-          files: dist-lead/*
+            **Windows** (10 and 11, 64-bit): download **OBSDN-${{ env.OBSDN_VERSION }}-Windows-Setup.exe**. If SmartScreen appears, click **More info**, then **Run anyway**.
+          files: dist-obsdn/*

@@ -64,8 +64,8 @@ set(SPARK_COMMON_SOURCES
     Source/Instrument/FactorySounds.cpp
     Source/Instrument/Shapeshift.cpp)
 
-# SparkLead (the lead synth with SparkRiff)
-set(SPARKLEAD_SOURCES
+# OBSDN (the lead synth with its riff writer)
+set(OBSDN_SOURCES
     ${SPARK_SHARED_SOURCES}
     Source/Lead/Riff.cpp
     Source/Lead/LeadPresets.cpp
@@ -123,16 +123,16 @@ target_sources(Spark PRIVATE
 spark_configure(Spark)
 target_link_libraries(Spark PRIVATE SparkSounds)
 
-# ---------- SparkLead (lead synth + SparkRiff) ----------
-set(SPARKLEAD_VERSION 0.1.0)
-juce_add_plugin(SparkLead
-    VERSION ${SPARKLEAD_VERSION}
+# ---------- OBSDN (lead synth + riff writer, jade theme) ----------
+set(OBSDN_VERSION 0.2.0)
+juce_add_plugin(OBSDN
+    VERSION ${OBSDN_VERSION}
     COMPANY_NAME "Spark Audio"
-    BUNDLE_ID com.sparkaudio.sparklead
+    BUNDLE_ID com.sparkaudio.obsdn
     PLUGIN_MANUFACTURER_CODE Sprk
-    PLUGIN_CODE SpLd
+    PLUGIN_CODE Obsd
     FORMATS ${SPARK_FORMATS}
-    PRODUCT_NAME "SparkLead"
+    PRODUCT_NAME "OBSDN"
     IS_SYNTH TRUE
     NEEDS_MIDI_INPUT TRUE
     NEEDS_MIDI_OUTPUT FALSE
@@ -141,11 +141,12 @@ juce_add_plugin(SparkLead
     COPY_PLUGIN_AFTER_BUILD FALSE
     VST3_CATEGORIES Instrument Synth
     AU_MAIN_TYPE kAudioUnitType_MusicDevice
-    ICON_BIG Resources/Icon.png
+    ICON_BIG Resources/OBSDN/Icon.png
     HARDENED_RUNTIME_ENABLED ${SPARK_HARDENED_RUNTIME}
     MICROPHONE_PERMISSION_ENABLED FALSE)
-target_sources(SparkLead PRIVATE ${SPARKLEAD_SOURCES})
-spark_configure(SparkLead)
+target_sources(OBSDN PRIVATE ${OBSDN_SOURCES})
+spark_configure(OBSDN)
+target_compile_definitions(OBSDN PRIVATE SPARK_THEME_OBSDN=1)
 
 # ---------- Offline tests (not shipped) ----------
 option(SPARK_BUILD_TESTS "Build the offline render tests" OFF)
@@ -166,12 +167,12 @@ if(SPARK_BUILD_TESTS)
         juce::juce_audio_utils juce::juce_audio_formats juce::juce_dsp
         juce::juce_recommended_config_flags)
 
-    juce_add_console_app(SparkLeadTests PRODUCT_NAME "SparkLeadTests")
-    target_sources(SparkLeadTests PRIVATE Tests/SparkLeadTests.cpp ${SPARKLEAD_SOURCES})
-    target_include_directories(SparkLeadTests PRIVATE Source)
-    target_compile_definitions(SparkLeadTests PRIVATE
-        JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 SPARK_TESTS=1 JUCE_MODAL_LOOPS_PERMITTED=1)
-    target_link_libraries(SparkLeadTests PRIVATE SparkAssets
+    juce_add_console_app(OBSDNTests PRODUCT_NAME "OBSDNTests")
+    target_sources(OBSDNTests PRIVATE Tests/OBSDNTests.cpp ${OBSDN_SOURCES})
+    target_include_directories(OBSDNTests PRIVATE Source)
+    target_compile_definitions(OBSDNTests PRIVATE
+        JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 SPARK_TESTS=1 JUCE_MODAL_LOOPS_PERMITTED=1 SPARK_THEME_OBSDN=1)
+    target_link_libraries(OBSDNTests PRIVATE SparkAssets
         juce::juce_audio_utils juce::juce_audio_formats juce::juce_dsp
         juce::juce_recommended_config_flags)
 endif()

@@ -1,5 +1,6 @@
 #include "SparkLookAndFeel.h"
 #include <BinaryData.h>
+#include <array>
 
 namespace spark
 {
@@ -147,6 +148,110 @@ juce::Path makeStarPath (juce::Rectangle<float> a)
     }
     p.closeSubPath();
     return p;
+}
+
+juce::Path makeGemPath (juce::Rectangle<float> a)
+{
+    // a double-pointed crystal: tall and narrow, sharp at both ends
+    const float cx = a.getCentreX(), y = a.getY(), w = a.getWidth(), h = a.getHeight();
+    juce::Path p;
+    p.startNewSubPath (cx, y);
+    p.lineTo (cx + w * 0.26f, y + h * 0.33f);
+    p.lineTo (cx + w * 0.26f, y + h * 0.67f);
+    p.lineTo (cx, y + h);
+    p.lineTo (cx - w * 0.26f, y + h * 0.67f);
+    p.lineTo (cx - w * 0.26f, y + h * 0.33f);
+    p.closeSubPath();
+    return p;
+}
+
+juce::Path makeLogoPath (juce::Rectangle<float> a)
+{
+    return brand::isObsdn ? makeGemPath (a) : makeStarPath (a);
+}
+
+const std::array<juce::Point<float>, 6>& gemPoints()
+{
+    // outline of the crystal in units of its radius (x right, y down): top, right shoulders, bottom, left shoulders
+    static const std::array<juce::Point<float>, 6> p { { { 0.03f, -1.0f }, { 0.42f, -0.34f }, { 0.42f, 0.34f },
+                                                         { -0.03f, 1.0f }, { -0.42f, 0.34f }, { -0.42f, -0.34f } } };
+    return p;
+}
+
+void drawGem (juce::Graphics& g, juce::Rectangle<float> area, float lift)
+{
+    using namespace colours;
+    const auto c = area.getCentre();
+    const float R = juce::jmin (area.getWidth(), area.getHeight()) * 0.5f;
+    const juce::Colour deep (0xff03211a), stone (0xff0c7050);
+    lift = juce::jlimit (0.0f, 1.0f, lift);
+    auto P = [&] (float x, float y) { return juce::Point<float> (c.x + x * R, c.y + y * R); };
+
+    // soft jade halo behind the crystal
+    g.setGradientFill (juce::ColourGradient (gold.withAlpha (0.20f + 0.18f * lift), c, gold.withAlpha (0.0f), P (1.2f, 0.0f), true));
+    g.fillEllipse (juce::Rectangle<float> (R * 2.4f, R * 2.4f).withCentre (c));
+
+    // Columns across the front: left edge, left ridge, right ridge, right edge. The inner ridges run a
+    // little further up and down than the edges, so the ends split into facets that meet at the points.
+    const float xs[4] { -0.42f, -0.13f, 0.19f, 0.42f };
+    const float shoulder[4] { 0.34f, 0.48f, 0.46f, 0.34f };
+    const auto top = P (0.03f, -1.0f), bottom = P (-0.03f, 1.0f);
+    // brightness of each face: light comes from the top left
+    const float body[3] { 0.62f, 0.44f, 0.20f };
+    const float cap[3] { 0.86f, 0.66f, 0.36f };
+    const float foot[3] { 0.34f, 0.22f, 0.08f };
+    auto tone = [&] (float v)
+    {
+        v = juce::jlimit (0.0f, 1.0f, v + 0.18f * lift);
+        return deep.interpolatedWith (stone, juce::jmin (1.0f, v * 1.35f)).interpolatedWith (goldHi, juce::jmax (0.0f, v - 0.7f) * 1.8f);
+    };
+
+    juce::Path edges;
+    for (int i = 0; i < 3; ++i)
+    {
+        const auto tl = P (xs[i], -shoulder[i]), tr = P (xs[i + 1], -shoulder[i + 1]);
+        const auto bl = P (xs[i], shoulder[i]), br = P (xs[i + 1], shoulder[i + 1]);
+        juce::Path face;
+        face.addQuadrilateral (tl.x, tl.y, tr.x, tr.y, br.x, br.y, bl.x, bl.y);
+        g.setGradientFill (juce::ColourGradient (tone (body[i] + 0.08f), tl, tone (body[i] - 0.12f), bl, false));
+        g.fillPath (face);
+
+        juce::Path upper;
+        upper.addTriangle (top, tr, tl);
+        g.setColour (tone (cap[i]));
+        g.fillPath (upper);
+
+        juce::Path lower;
+        lower.addTriangle (bl, br, bottom);
+        g.setColour (tone (foot[i]));
+        g.fillPath (lower);
+
+        edges.startNewSubPath (top); edges.lineTo (tl);
+        edges.startNewSubPath (tl); edges.lineTo (bl);
+        edges.startNewSubPath (bl); edges.lineTo (bottom);
+        edges.startNewSubPath (tl); edges.lineTo (tr);
+        edges.startNewSubPath (bl); edges.lineTo (br);
+    }
+    edges.startNewSubPath (top); edges.lineTo (P (xs[3], -shoulder[3]));
+    edges.lineTo (P (xs[3], shoulder[3]));
+    edges.lineTo (bottom);
+    g.setColour (goldHi.withAlpha (0.30f + 0.2f * lift));
+    g.strokePath (edges, juce::PathStrokeType (0.8f));
+
+    juce::Path outline;
+    const auto& pts = gemPoints();
+    for (size_t i = 0; i < pts.size(); ++i)
+        if (i == 0) outline.startNewSubPath (P (pts[i].x, pts[i].y)); else outline.lineTo (P (pts[i].x, pts[i].y));
+    outline.closeSubPath();
+    g.setColour (goldHi.withAlpha (0.60f + 0.3f * lift));
+    g.strokePath (outline, juce::PathStrokeType (1.2f, juce::PathStrokeType::mitered));
+
+    // a glint high on the lit face, and a bright line down the leading ridge
+    g.setGradientFill (juce::ColourGradient (flash.withAlpha (0.55f + 0.3f * lift), P (-0.13f, -0.48f),
+                                             flash.withAlpha (0.0f), P (-0.13f, 0.40f), false));
+    g.fillRect (juce::Rectangle<float> (P (-0.13f, -0.48f), P (-0.13f, 0.40f)).expanded (0.6f, 0.0f));
+    g.setColour (flash.withAlpha (0.6f + 0.35f * lift));
+    g.fillPath (makeStarPath (juce::Rectangle<float> (R * 0.30f, R * 0.30f).withCentre (P (-0.24f, -0.46f))));
 }
 
 juce::Path makeFivePointStar (juce::Rectangle<float> a)

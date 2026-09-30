@@ -593,7 +593,7 @@ juce::MidiFile toMidiFile (const Riff& riff, int key, int scale, int octave, flo
 
 juce::File writeMidiFile (const Riff& riff, int key, int scale, int octave, float gate, float swing, const juce::String& name)
 {
-    auto folder = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("SparkRiff");
+    auto folder = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile ("OBSDN Riffs");
     folder.createDirectory();
     auto file = folder.getChildFile (juce::File::createLegalFileName (name) + ".mid");
     file.deleteFile();

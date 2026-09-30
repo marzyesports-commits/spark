@@ -116,7 +116,7 @@ ModuleCard::ModuleCard (FxHost& p, const FxRack::ModuleInfo& m)
     addAndMakeVisible (onButton);
     addAndMakeVisible (lockButton);
     onButton.setTooltip ("Switch " + m.name.toLowerCase() + " on or off");
-    lockButton.setTooltip ("Lock: Spark and Breed leave this effect alone");
+    lockButton.setTooltip ("Lock: " + juce::String (brand::verb) + " and Breed leave this effect alone");
     onButton.onClick = [this] { onAttachment.setValueAsCompleteGesture (isOn() ? 0.0f : 1.0f); };
     lockButton.onClick = [this] { host.setModuleLocked (info.id, ! host.isModuleLocked (info.id)); };
 
@@ -235,6 +235,7 @@ FxPage::FxPage (FxHost& p) : host (p), processor (p.fxProcessor()), output (p), 
     for (auto* b : { &chainButton, &sparkFx, &allOff })
         addAndMakeVisible (b);
 
+    sparkFx.setButtonText (juce::String (brand::verbCaps) + " FX");
     chainButton.setTooltip ("Effect chains: ready-made rack settings");
     sparkFx.setTooltip ("Roll new settings for the effects that are on (locked ones stay put)");
     allOff.setTooltip ("Switch every effect off (the Space reverb stays)");

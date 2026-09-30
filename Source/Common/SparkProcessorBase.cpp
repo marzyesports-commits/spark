@@ -313,7 +313,7 @@ void SparkProcessorBase::loadRandomPreset (const juce::String& category)
 juce::File SparkProcessorBase::getUserPresetFolder() const
 {
     return juce::File::getSpecialLocation (juce::File::userDocumentsDirectory)
-        .getChildFile ("Spark").getChildFile ("Presets").getChildFile (kind == "fx" ? "Spark FX" : (kind == "lead" ? "SparkLead" : "Spark"));
+        .getChildFile ("Spark").getChildFile ("Presets").getChildFile (kind == "fx" ? "Spark FX" : (kind == "lead" ? "OBSDN" : "Spark"));
 }
 
 void SparkProcessorBase::rescanUserPresets()

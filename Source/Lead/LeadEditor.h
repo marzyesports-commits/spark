@@ -59,7 +59,7 @@ private:
     ChoiceSegments voiceMode;
 };
 
-// A SynthCard that the SparkLead pages fill in from outside.
+// A SynthCard that the OBSDN pages fill in from outside.
 class LeadCard : public SynthCard
 {
 public:
@@ -100,7 +100,7 @@ private:
     LeadCard output { "OUTPUT", {} };
 };
 
-// ---- SparkRiff ---------------------------------------------------------------------
+// ---- Riff ---------------------------------------------------------------------
 // The riff as a piano roll on the key's scale: click an empty cell to add a note, click a note to remove it.
 class RiffRoll : public juce::Component,
                  private juce::Timer,

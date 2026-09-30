@@ -101,7 +101,7 @@ namespace
         flt ("level", "Level", { -36.0f, 6.0f }, -3.0f,
              juce::AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return juce::String (v, 1) + " dB"; }));
 
-        // SparkRiff
+        // the riff writer
         choice ("riffOn", "Riff", { "Off", "On" }, 0);
         choice ("riffKey", "Riff Key", riff::keyNames(), 9);
         choice ("riffScale", "Riff Scale", riff::scaleNames(), 1);
@@ -360,7 +360,7 @@ juce::String LeadProcessor::riffName() const
     const auto key = riff::keyNames()[juce::roundToInt (params.riffKey->load())];
     const auto scale = riff::scaleNames()[juce::roundToInt (params.riffScale->load())];
     const auto style = riff::styleNames()[currentRiff.style];
-    return "SparkRiff " + key + " " + scale + " " + style + " " + juce::String (currentRiff.seed % 1000).paddedLeft ('0', 3);
+    return "OBSDN Riff " + key + " " + scale + " " + style + " " + juce::String (currentRiff.seed % 1000).paddedLeft ('0', 3);
 }
 
 juce::File LeadProcessor::exportRiffMidi() const
@@ -468,7 +468,7 @@ void LeadProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
         else if (msg.isAftertouch()) pressure = (float) msg.getAfterTouchValue() / 127.0f;
     }
 
-    // SparkRiff turns held keys into the riff
+    // the riff writer turns held keys into the riff
     const bool riffOn = params.riffOn->load() > 0.5f;
     if (riffOn)
     {

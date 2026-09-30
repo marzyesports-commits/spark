@@ -28,9 +28,9 @@ private:
     int soundingNote = -1, lastNote = -1, lastMode = -1;
 };
 
-// SparkLead: a lead synth. Unison wavetable oscillators, a second oscillator, sub and breath,
+// OBSDN: a lead synth. Unison wavetable oscillators, a second oscillator, sub and breath,
 // a filter with its own envelope, and the expression that makes leads feel played:
-// delayed vibrato, scoops into notes, fall-offs, glide. SparkRiff writes the lines.
+// delayed vibrato, scoops into notes, fall-offs, glide. The riff writer (Riff.h) writes the lines.
 class LeadProcessor : public SparkProcessorBase,
                       public FxHost,
                       private juce::Timer
@@ -59,7 +59,7 @@ public:
         std::atomic<float> *fltA = nullptr, *fltD = nullptr, *fltS = nullptr, *fltR = nullptr;
         std::atomic<float> *vibRate = nullptr, *vibDelay = nullptr, *scoop = nullptr, *fall = nullptr;
         std::atomic<float> *level = nullptr;
-        // SparkRiff
+        // the riff writer
         std::atomic<float> *riffOn = nullptr, *riffKey = nullptr, *riffScale = nullptr, *riffStyle = nullptr, *riffBars = nullptr;
         std::atomic<float> *riffDensity = nullptr, *riffRange = nullptr, *riffGate = nullptr, *riffSwing = nullptr;
         std::atomic<float> *riffOctave = nullptr, *riffFollow = nullptr, *riffLatch = nullptr;
@@ -72,7 +72,7 @@ public:
     int glideFromNote = -1;
     float modWheel = 0.0f, pressure = 0.0f;
 
-    // ---- SparkRiff (message thread unless noted)
+    // ---- Riff (message thread unless noted)
     riff::Riff getRiff() const;
     void setRiff (const riff::Riff&, bool addToHistory = true);
     riff::Settings riffSettings() const;
@@ -96,7 +96,7 @@ public:
     bool keepsValueOnPresetLoad (const juce::String& paramId) const override { return paramId.startsWith ("riff"); }
 
     // ---- AudioProcessor
-    const juce::String getName() const override { return "SparkLead"; }
+    const juce::String getName() const override { return "OBSDN"; }
     bool acceptsMidi() const override { return true; }
     bool producesMidi() const override { return false; }
     bool isMidiEffect() const override { return false; }

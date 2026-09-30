@@ -94,7 +94,7 @@ PresetLibrary makeLeadPresets()
     PresetLibrary lib;
 
     add (lib, "Supersaw", "Wide unison saws for trance, EDM and big drops", {
-        { "Gold Supersaw",   "The SparkLead sound: wide, bright, singing",       { SAW, .55f, .68f, .30f, .20f, .30f, .25f, .30f }, 7, .005f, .40f, .85f, .25f, L, -8.0f },
+        { "Jade Supersaw",   "The OBSDN sound: wide, bright, singing",       { SAW, .55f, .68f, .30f, .20f, .30f, .25f, .30f }, 7, .005f, .40f, .85f, .25f, L, -8.0f },
         { "Trance Anthem",   "Soaring 7-voice saw with delay throws",           { SAW, .62f, .74f, .25f, .15f, .25f, .20f, .40f }, 7, .004f, .50f, .80f, .30f, L, -9.0f },
         { "Hands Up",        "Brighter, tighter supersaw for fast hooks",        { SAW, .48f, .80f, .40f, .25f, .15f, .12f, .25f }, 7, .002f, .30f, .75f, .18f, M, -8.0f },
         { "Euphoria",        "Soft-edged saw stack for emotional breakdowns",    { SAW, .70f, .60f, .15f, .10f, .35f, .30f, .55f }, 7, .03f, .60f, .90f, .45f, L, -9.5f },
@@ -102,10 +102,10 @@ PresetLibrary makeLeadPresets()
         { "Pluck Lead",      "Short snappy saw for arps and riffs",              { SAW, .45f, .55f, .70f, .20f, .00f, .00f, .30f }, 5, .002f, .22f, .15f, .18f, P, -5.5f },
     });
     delay (lib, "Trance Anthem", 2, .45f, .25f);
-    delay (lib, "Gold Supersaw", 2, .35f, .18f);
+    delay (lib, "Jade Supersaw", 2, .35f, .18f);
     delay (lib, "Euphoria", 4, .45f, .25f);
     set (lib, "Euphoria", { { "oscBLevel", .35f }, { "oscBSemi", 12 }, { "oscBWave", SAW } });
-    set (lib, "Gold Supersaw", { { "oscBLevel", .25f }, { "oscBSemi", 12 }, { "oscBWave", SQR }, { "subLevel", .15f } });
+    set (lib, "Jade Supersaw", { { "oscBLevel", .25f }, { "oscBSemi", 12 }, { "oscBWave", SQR }, { "subLevel", .15f } });
     set (lib, "Hands Up", { { "oscBLevel", .30f }, { "oscBSemi", 12 }, { "oscBWave", SAW } });
     dist (lib, "Hardstyle Scream", 0, .55f, .6f);
     eq (lib, "Hardstyle Scream", -3, 4, 2);

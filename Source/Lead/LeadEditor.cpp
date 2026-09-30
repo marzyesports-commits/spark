@@ -629,7 +629,7 @@ RiffPage::RiffPage (LeadProcessor& p)
       roll (p), history (p), dragTile (p)
 {
     addAndMakeVisible (onSwitch);
-    onSwitch.setTooltip ("SparkRiff on: held keys play the riff. Off: keys play notes as normal");
+    onSwitch.setTooltip ("Riff on: held keys play the riff. Off: keys play notes as normal");
     onSwitch.onClick = [this] { onAttachment.setValueAsCompleteGesture (isOn() ? 0.0f : 1.0f); };
 
     for (auto* b : { &generate, &mutate, &rhythm, &answer, &playButton })
@@ -696,7 +696,7 @@ void RiffPage::refresh()
     const int st = juce::roundToInt (processor.params.riffStyle->load());
     juce::String hint = riff::styleHints()[st] + ".  ";
     if (! on)
-        hint += "SparkRiff is off: switch it on, then hold a key to play the riff.";
+        hint += "The riff is off: switch it on, then hold a key to play it.";
     else if (followMode == riff::fixedRoot)
         hint += "Hold any key to play the riff as written.";
     else
@@ -711,8 +711,8 @@ void RiffPage::refresh()
 
 void RiffPage::resized()
 {
-    onSwitch.setBounds (186, 18, 64, 24);
-    int x = 266;
+    onSwitch.setBounds (112, 18, 64, 24);
+    int x = 192;
     for (auto* b : { &generate, &mutate, &rhythm, &answer })
     {
         const int w = b == &generate ? 124 : 88;
@@ -743,10 +743,10 @@ void RiffPage::paint (juce::Graphics& g)
     g.drawRoundedRectangle (b.reduced (0.5f), 16.0f, 1.0f);
 
     g.setColour (gold);
-    g.fillPath (makeStarPath ({ 18.0f, 20.0f, 18.0f, 18.0f }));
+    g.fillPath (makeLogoPath ({ 18.0f, 20.0f, 18.0f, 18.0f }));
     g.setColour (text);
     g.setFont (fonts::display (13.0f).withExtraKerningFactor (0.1f));
-    g.drawText ("SPARKRIFF", juce::Rectangle<float> (42.0f, 14.0f, 140.0f, 32.0f), juce::Justification::centredLeft, false);
+    g.drawText ("RIFF", juce::Rectangle<float> (42.0f, 14.0f, 140.0f, 32.0f), juce::Justification::centredLeft, false);
 
     g.setColour (muted);
     g.setFont (fonts::body (11.0f));
@@ -760,12 +760,12 @@ namespace
     EditorStyle leadStyle()
     {
         EditorStyle s;
-        s.badge = "LEAD";
+        s.badge = {};
         s.tabs = { "LEAD", "SYNTH", "RIFF", "FX" };
         s.tabTips = { "The sound: oscillators and facets", "Filter, envelopes, vibrato, scoop and glide",
-                      "SparkRiff: write and play lead lines", "The effects rack" };
-        s.aboutTitle = "SparkLead";
-        s.aboutText = "Hooks on demand. Pick a sound, let SparkRiff write the line, hit Spark until it's yours.";
+                      "Riff: write and play lead lines", "The effects rack" };
+        s.aboutTitle = "OBSDN";
+        s.aboutText = "Hooks on demand. Pick a sound, let the riff writer find the line, strike the stone until it's yours.";
         return s;
     }
 }

@@ -240,12 +240,12 @@ void Header::paint (juce::Graphics& g)
 
     // logo
     g.setColour (gold);
-    g.fillPath (makeStarPath ({ 0.0f, b.getCentreY() - 13.0f, 26.0f, 26.0f }));
+    g.fillPath (makeLogoPath ({ 0.0f, b.getCentreY() - 13.0f, 26.0f, 26.0f }));
     g.setColour (text);
     const auto wordmark = fonts::display (26.0f).withExtraKerningFactor (0.22f);
-    const float wordWidth = juce::GlyphArrangement::getStringWidth (wordmark, "SPARK");
+    const float wordWidth = juce::GlyphArrangement::getStringWidth (wordmark, brand::wordmark);
     g.setFont (wordmark);
-    g.drawText ("SPARK", juce::Rectangle<float> (36.0f, 0.0f, wordWidth + 10.0f, b.getHeight()), juce::Justification::centredLeft, false);
+    g.drawText (brand::wordmark, juce::Rectangle<float> (36.0f, 0.0f, wordWidth + 10.0f, b.getHeight()), juce::Justification::centredLeft, false);
     if (badge.isNotEmpty())
     {
         const auto badgeFont = fonts::mono (11.0f).withExtraKerningFactor (0.16f);
@@ -362,6 +362,11 @@ void CoreView::SparkButton::paintButton (juce::Graphics& g, bool highlighted, bo
     using namespace colours;
     auto b = getLocalBounds().toFloat();
     auto circle = b.reduced (9.0f);
+    if (brand::isObsdn)
+    {
+        drawGem (g, circle.reduced (2.0f), down ? 0.0f : (highlighted ? 0.8f : 0.25f));
+        return;
+    }
     g.setColour (line2);
     g.drawEllipse (b.reduced (0.5f), 1.0f);
     g.setColour (down ? gold.darker (0.2f) : (highlighted ? goldHi : gold));
@@ -383,7 +388,7 @@ CoreView::CoreView (SparkProcessorBase& p) : processor (p)
 {
     addAndMakeVisible (sparkButton);
     sparkButton.setMouseCursor (juce::MouseCursor::PointingHandCursor);
-    sparkButton.setTooltip ("Roll a new variation. Locked facets stay put.");
+    sparkButton.setTooltip (juce::String (brand::verb) + ": roll a new variation. Locked facets stay put.");
     sparkButton.onClick = [this] { processor.spark(); burst(); };
     processor.addChangeListener (this);
     processor.getCoreShape (target, ringPoints);
@@ -579,9 +584,18 @@ void CoreView::burst()
     const float base = storm.nextFloat() * juce::MathConstants<float>::twoPi;
     for (int k = 0; k < 5; ++k)
     {
-        const float ang = base + (float) k * juce::MathConstants<float>::twoPi / 5.0f + (storm.nextFloat() - 0.5f) * 0.6f;
+        float ang = base + (float) k * juce::MathConstants<float>::twoPi / 5.0f + (storm.nextFloat() - 0.5f) * 0.6f;
+        float from = 70.0f;
+        if (brand::isObsdn)
+        {
+            // the crystal discharges from its points and shoulders
+            const auto& pts = gemPoints();
+            const auto& pt = pts[(size_t) (((int) (base * 10.0f) + k) % (int) pts.size())];
+            ang = std::atan2 (pt.x, -pt.y);
+            from = 58.0f * pt.getDistanceFromOrigin();
+        }
         const juce::Point<float> dir (std::sin (ang), -std::cos (ang));
-        spawnBolt (centre + dir * 70.0f, centre + dir * (125.0f + storm.nextFloat() * 45.0f), 1.0f);
+        spawnBolt (centre + dir * from, centre + dir * (125.0f + storm.nextFloat() * 45.0f), 1.0f);
     }
     for (int k = 0; k < 36; ++k)
     {
@@ -626,7 +640,7 @@ void CoreView::stepStorm (float dt)
 void CoreView::paintStorm (juce::Graphics& g)
 {
     using namespace colours;
-    const juce::Colour white (0xfffffbf0);
+    const juce::Colour white (flash);
 
     for (const auto& b : bolts)
     {
@@ -1292,7 +1306,7 @@ void FacetList::changeListenerCallback (juce::ChangeBroadcaster*)
         b->setIcon (locked ? Icon::lock : Icon::unlock);
         const auto name = facets[(size_t) i].name.toLowerCase();
         b->setTitle ((locked ? "Unlock " : "Lock ") + name);
-        b->setTooltip (locked ? "Locked: Spark and Breed leave " + name + " alone" : "Lock " + name + " so Spark leaves it alone");
+        b->setTooltip (locked ? "Locked: " + juce::String (brand::verb) + " and Breed leave " + name + " alone" : "Lock " + name + " so " + juce::String (brand::verb) + " leaves it alone");
     }
     repaint();
 }
@@ -1482,7 +1496,7 @@ void LineageStrip::paint (juce::Graphics& g)
     drawSectionLabel (g, "LINEAGE", { 16.0f, 12.0f, 90.0f, 30.0f });
     g.setColour (muted);
     g.setFont (fonts::body (11.0f));
-    g.drawText ("Click a spark to go back to it. Keep the ones you love, then breed them.",
+    g.drawText ("Click a " + juce::String (brand::variationWord) + " to go back to it. Keep the ones you love, then breed them.",
                 juce::Rectangle<int> (110, 12, keep.getX() - 120, 30), juce::Justification::centredLeft, true);
 
     const auto& nodes = processor.lineage.nodes();
@@ -1848,7 +1862,7 @@ void PresetBrowser::Tiles::paint (juce::Graphics& g)
         if (isCur)
         {
             g.setColour (gold);
-            g.fillPath (makeStarPath (juce::Rectangle<float> (12.0f, 12.0f).withCentre ({ inner.getRight() - 6.0f, inner.getY() + 9.0f })));
+            g.fillPath (makeLogoPath (juce::Rectangle<float> (12.0f, 12.0f).withCentre ({ inner.getRight() - 6.0f, inner.getY() + 9.0f })));
         }
         g.setColour (isCur ? gold : text);
         g.setFont (fonts::body (14.0f, true));
@@ -1914,7 +1928,7 @@ SparkEditorBase::SparkEditorBase (SparkProcessorBase& p, const EditorStyle& edit
       style (editorStyle),
       header (p, editorStyle),
       core (p),
-      mutate (p.mutateParam(), "MUTATE", "Mutate: how many facets move on each Spark"),
+      mutate (p.mutateParam(), "MUTATE", "Mutate: how many facets move on each " + juce::String (brand::verb)),
       chaos (p.chaosParam(), "CHAOS", "Chaos: how far they move"),
       facets (p),
       lineage (p),

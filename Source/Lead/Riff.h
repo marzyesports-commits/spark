@@ -6,7 +6,7 @@
 
 namespace spark::riff
 {
-// SparkRiff: writes lead lines. A riff is a loop of notes stored as scale degrees, so changing
+// Riff: writes lead lines. A riff is a loop of notes stored as scale degrees, so changing
 // the key or scale re-voices it without losing the tune. Times are in ticks, 24 to a beat
 // (so 16ths are 6 ticks and 16th triplets are 4).
 constexpr int ticksPerBeat = 24;

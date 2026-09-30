@@ -1,4 +1,4 @@
-// Offline checks for SparkLead and SparkRiff: the riff writer, the riff player, rendering every
+// Offline checks for OBSDN: the riff writer, the riff player, rendering every
 // preset, state, and snapshots of every page. Not shipped.
 #include <juce_audio_utils/juce_audio_utils.h>
 #include "Lead/LeadProcessor.h"
@@ -32,7 +32,7 @@ struct HostPlayHead : public juce::AudioPlayHead
 
 struct Ev { double t; juce::MidiMessage msg; };
 
-// Renders timed MIDI (seconds). Collects the MIDI the synth actually received (after SparkRiff) in 'played'.
+// Renders timed MIDI (seconds). Collects the MIDI the synth actually received (after the riff writer) in 'played'.
 juce::AudioBuffer<float> render (LeadProcessor& p, double sr, std::vector<Ev> events, double total,
                                  HostPlayHead* host = nullptr, std::vector<Ev>* played = nullptr)
 {
@@ -133,11 +133,31 @@ int main (int argc, char** argv)
     outDir.createDirectory();
     const double sr = 48000.0;
 
-    // Demo: SparkRiff following a chord progression (A minor: Am F C G) in several styles, at 124 bpm
+    // App icon: the gem on black, from the same drawing code as the plugin
+    if (argc > 2 && juce::String (argv[2]) == "icon")
+    {
+        juce::Image img (juce::Image::ARGB, 1024, 1024, true);
+        {
+            juce::Graphics g (img);
+            g.setColour (colours::bg);
+            g.fillRoundedRectangle (0.0f, 0.0f, 1024.0f, 1024.0f, 220.0f);
+            g.setColour (colours::line2);
+            g.drawRoundedRectangle (6.0f, 6.0f, 1012.0f, 1012.0f, 214.0f, 6.0f);
+            g.addTransform (juce::AffineTransform::scale (5.6f, 5.6f, 512.0f, 512.0f));
+            drawGem (g, juce::Rectangle<float> (120.0f, 120.0f).withCentre ({ 512.0f, 512.0f }), 0.45f);
+        }
+        auto f = outDir.getChildFile ("Icon.png");
+        f.deleteFile();
+        juce::FileOutputStream os (f);
+        juce::PNGImageFormat().writeImageToStream (img, os);
+        return 0;
+    }
+
+    // Demo: the riff writer following a chord progression (A minor: Am F C G) in several styles, at 124 bpm
     if (argc > 2 && juce::String (argv[2]) == "demo")
     {
         struct Section { const char* preset; int style; juce::uint32 seed; float density; };
-        const Section sections[] { { "Gold Supersaw", riff::trance, 11, 0.45f }, { "Future Glide", riff::future, 5, 0.55f },
+        const Section sections[] { { "Jade Supersaw", riff::trance, 11, 0.45f }, { "Future Glide", riff::future, 5, 0.55f },
                                    { "Drill Slide", riff::drill, 21, 0.45f }, { "Afro Flute", riff::afro, 8, 0.55f },
                                    { "8-bit Hero", riff::chip, 3, 0.5f } };
         const double bpm = 124.0, bar = 240.0 / bpm;
@@ -177,7 +197,7 @@ int main (int argc, char** argv)
     }
 
     // ------------------------------------------------------------------ riff writer
-    std::cout << "SparkRiff: writing riffs" << std::endl;
+    std::cout << "Riff: writing riffs" << std::endl;
     {
         bool shapesOk = true, endsOk = true, deterministic = true, spansOk = true;
         int chordHits = 0, strongNotes = 0, distinct = 0, total = 0;
@@ -255,7 +275,7 @@ int main (int argc, char** argv)
             lastTime = juce::jmax (lastTime, e->message.getTimeStamp());
         }
         check (ons == (int) base.notes.size() && lastTime <= base.lengthTicks() * 4.0 + 0.1, "the MIDI export has every note and ends at the loop length");
-        const auto written = riff::writeMidiFile (base, 9, 1, 0, 0.8f, 0.2f, "SparkRiff test");
+        const auto written = riff::writeMidiFile (base, 9, 1, 0, 0.8f, 0.2f, "OBSDN riff test");
         check (written.existsAsFile() && written.getSize() > 30, "the MIDI file is written for dragging");
 
         const auto& minor = riff::scaleSteps (1);
@@ -264,7 +284,7 @@ int main (int argc, char** argv)
     }
 
     // ------------------------------------------------------------------ riff player
-    std::cout << "SparkRiff: playing riffs" << std::endl;
+    std::cout << "Riff: playing riffs" << std::endl;
     {
         LeadProcessor p;
         p.prepareToPlay (sr, 256);
@@ -335,7 +355,7 @@ int main (int argc, char** argv)
         p.prepareToPlay (sr, 256);
         played.clear();
         render (p, sr, { { 0.0, juce::MidiMessage::noteOn (1, 64, 0.9f) }, { 0.5, juce::MidiMessage::noteOff (1, 64) } }, 0.8, nullptr, &played);
-        check (countOns (played) == 1 && played.front().msg.getNoteNumber() == 64, "with SparkRiff off, a key plays just that note");
+        check (countOns (played) == 1 && played.front().msg.getNoteNumber() == 64, "with the riff writer off, a key plays just that note");
 
         // turning the riff off mid-phrase leaves nothing hanging (effects off so their tails don't count)
         setReal (p, "fxReverbOn", 0.0f);
@@ -349,11 +369,11 @@ int main (int argc, char** argv)
         for (int i = 0; i < 100; ++i) { p.processBlock (buf, midi); midi.clear(); }
         setReal (p, "riffOn", 0.0f);
         for (int i = 0; i < 400; ++i) { p.processBlock (buf, midi); midi.clear(); }
-        check (buf.getMagnitude (0, 0, 256) < 1.0e-4f, "switching SparkRiff off mid-note lets the note go");
+        check (buf.getMagnitude (0, 0, 256) < 1.0e-4f, "switching the riff writer off mid-note lets the note go");
     }
 
     // ------------------------------------------------------------------ riff editing, history, state
-    std::cout << "SparkRiff: editing and saving" << std::endl;
+    std::cout << "Riff: editing and saving" << std::endl;
     {
         LeadProcessor p;
         const auto start = p.getRiff();
@@ -400,7 +420,7 @@ int main (int argc, char** argv)
     }
 
     // ------------------------------------------------------------------ sound
-    std::cout << "SparkLead: presets" << std::endl;
+    std::cout << "OBSDN: presets" << std::endl;
     {
         LeadProcessor p;
         p.prepareToPlay (sr, 256);
@@ -439,7 +459,7 @@ int main (int argc, char** argv)
         check (*mx - *mn < 6.0f, "presets are level-matched within 6 dB (" + juce::String (*mn, 1) + " to " + juce::String (*mx, 1) + " dB)");
     }
 
-    std::cout << "SparkLead: engine" << std::endl;
+    std::cout << "OBSDN: engine" << std::endl;
     {
         LeadProcessor p;
         p.prepareToPlay (sr, 256);
@@ -494,11 +514,11 @@ int main (int argc, char** argv)
         const auto r = p.getRiff();
         auto out = render (p, sr, { { 0.0, juce::MidiMessage::noteOn (1, 57, 0.9f) }, { r.bars * 4.0, juce::MidiMessage::noteOff (1, 57) } }, r.bars * 4.0 + 1.5);
         writeWav (outDir.getChildFile ("riff-demo.wav"), out, sr);
-        check (peakOf (out) > 0.05f && allFinite (out), "holding one key plays the riff through Gold Supersaw");
+        check (peakOf (out) > 0.05f && allFinite (out), "holding one key plays the riff through Jade Supersaw");
     }
 
     // ------------------------------------------------------------------ UI
-    std::cout << "SparkLead: pages" << std::endl;
+    std::cout << "OBSDN: pages" << std::endl;
     {
         LeadProcessor p;
         p.prepareToPlay (sr, 256);
@@ -511,6 +531,28 @@ int main (int argc, char** argv)
             snapshot (ed.get(), outDir.getChildFile (juce::String ("page-") + names[page] + ".png"));
         }
         check (true, "every page draws");
+
+        // strike the stone and catch the lightning mid-flight
+        le->showPage (0);
+        std::function<juce::Button* (juce::Component*)> findStrike = [&] (juce::Component* c) -> juce::Button*
+        {
+            if (auto* b = dynamic_cast<juce::Button*> (c); b != nullptr && b->getName() == "Spark") return b;
+            for (auto* child : c->getChildren())
+                if (auto* found = findStrike (child)) return found;
+            return nullptr;
+        };
+        if (auto* strike = findStrike (ed.get()))
+        {
+            strike->triggerClick();
+            for (int i = 0; i < 4; ++i) juce::MessageManager::getInstance()->runDispatchLoopUntil (15);
+            auto* core = strike->getParentComponent();
+            auto img = ed->createComponentSnapshot (ed->getLocalArea (core, core->getLocalBounds()), true, 1.5f);
+            auto f = outDir.getChildFile ("strike.png");
+            f.deleteFile();
+            juce::FileOutputStream os (f);
+            juce::PNGImageFormat().writeImageToStream (img, os);
+            check (true, "striking the stone throws lightning");
+        }
         setReal (p, "riffOn", 1.0f);
         p.riffPreview = true;
         le->showPage (2);
