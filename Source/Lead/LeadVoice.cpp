@@ -5,6 +5,28 @@ namespace spark
 namespace
 {
     constexpr int chunk = 32;   // control rate: pitch, vibrato and unison spread update every 32 samples
+
+    struct Hann
+    {
+        static constexpr int size = 1024;
+        float data[size + 1];
+        Hann() { for (int i = 0; i <= size; ++i) data[i] = 0.5f - 0.5f * std::cos (juce::MathConstants<float>::twoPi * (float) i / (float) size); }
+        float at (float x) const noexcept
+        {
+            const float p = juce::jlimit (0.0f, 1.0f, x) * size;
+            const int i = juce::jmin ((int) p, size - 1);
+            return data[i] + (data[i + 1] - data[i]) * (p - (float) i);
+        }
+    };
+    const Hann& hann() { static Hann h; return h; }
+
+    inline float readAt (const float* d, int len, double pos) noexcept
+    {
+        const int i0 = juce::jlimit (0, len - 1, (int) pos);
+        const int i1 = juce::jmin (i0 + 1, len - 1);
+        const float fr = (float) (pos - (double) (int) pos);
+        return d[i0] + (d[i1] - d[i0]) * fr;
+    }
 }
 
 LeadVoice::LeadVoice (LeadProcessor& p) : processor (p)
@@ -39,6 +61,15 @@ void LeadVoice::startNote (int midiNote, float vel, juce::SynthesiserSound*, int
     // unison copies start at random points so the stack sounds wide; the centre one starts at zero for punch
     for (int u = 0; u < maxUnison; ++u)
         phaseA[u] = u == maxUnison / 2 ? 0.0 : random.nextDouble();
+    source = processor.getSource();
+    for (auto& g : grains) g.active = false;
+    samplesToNextGrain = 0.0;
+    noteSeconds = 0.0;
+    if (source != nullptr)
+    {
+        const double start = (double) processor.params.facet[LeadProcessor::wave]->load() * (double) (source->audio.getNumSamples() - 1);
+        for (auto& p : playPos) p = start;
+    }
     phaseB = subPhase = 0.0;
     vibPhase = 0.0;
     sinceAttack = 0.0;
@@ -77,6 +108,12 @@ void LeadVoice::changeNote (int midiNote, float vel, bool retrigger)
     if (retrigger)
     {
         velocity = vel;
+        if (source != nullptr)
+        {
+            const double start = (double) processor.params.facet[LeadProcessor::wave]->load() * (double) (source->audio.getNumSamples() - 1);
+            for (auto& p : playPos) p = start;
+        }
+        noteSeconds = 0.0;
         scoopNow = -processor.params.scoop->load() * 2.0f;
         ampEnv.noteOn();
         fltEnv.noteOn();
@@ -171,7 +208,7 @@ void LeadVoice::render (float* l, float* r, int n)
     const int voices = juce::jlimit (1, maxUnison, juce::roundToInt (p.unison->load()));
     const float spread = std::pow (detune, 1.5f) * 0.5f;   // semitones at the outer copies
     const float width = p.width->load();
-    const float framesA = p.facet[LeadProcessor::wave]->load() * lastFrame;
+    float framesA = p.facet[LeadProcessor::wave]->load() * lastFrame;
     double incA[maxUnison];
     int mipA[maxUnison];
     float gainL[maxUnison], gainR[maxUnison];
@@ -191,6 +228,26 @@ void LeadVoice::render (float* l, float* r, int n)
     // map each copy onto the phase slot of the same index (centre copy is slot 3)
     const int firstSlot = maxUnison / 2 - voices / 2;
 
+    // where oscillator A comes from
+    const int mode = juce::roundToInt (p.oscAMode->load());
+    const SourceData* src = source.get();
+    const bool useSource = src != nullptr && mode != LeadProcessor::waves && src->audio.getNumSamples() > 64;
+    const Wavetable* tableA = &table;
+    float gainA = 1.0f;
+    if (useSource && mode == LeadProcessor::table && src->table != nullptr)
+    {
+        tableA = src->table.get();
+        gainA = src->tableGain;
+        const float scan = p.scanTime->load();
+        float pos = p.facet[LeadProcessor::wave]->load();
+        if (scan > 0.001f)
+            pos += (1.0f - pos) * (float) juce::jmin (1.0, noteSeconds / (double) fmt::envSeconds (scan));
+        framesA = juce::jlimit (0.0f, 1.0f, pos) * (float) (tableA->getNumFrames() - 1);
+        for (int u = 0; u < voices; ++u) mipA[u] = Wavetable::mipForIncrement (incA[u]);
+    }
+    noteSeconds += dt;
+    const bool playsAudio = useSource && (mode == LeadProcessor::grain || mode == LeadProcessor::sample);
+
     // ---- oscillator B, sub, noise
     const float levelB = p.oscBLevel->load();
     const double incB = baseHz * std::exp2 ((p.oscBSemi->load() + p.oscBFine->load() / 100.0f + detune * 0.12f) / 12.0f) / sr;
@@ -200,18 +257,32 @@ void LeadVoice::render (float* l, float* r, int n)
     const double incSub = baseHz * 0.5 / sr;
     const float noise = p.noiseLevel->load() * 0.25f;
 
+    if (playsAudio)
+    {
+        // the sound's own pitch: its root note plays at the key's pitch
+        const double ratio = std::exp2 ((pitch - src->rootNote) / 12.0f) * src->sampleRate / sr;
+        double detuneRatios[maxUnison];
+        for (int u = 0; u < voices; ++u) detuneRatios[u] = incA[u] / (baseHz / sr);
+        if (mode == LeadProcessor::grain)
+            renderGrains (l, r, n, *src, ratio, detuneRatios, gainL, gainR, voices, p.facet[LeadProcessor::wave]->load(),
+                          fmt::grainSeconds (p.grainSize->load()), p.grainSpray->load());
+        else
+            renderSample (l, r, n, *src, ratio, detuneRatios, gainL, gainR, voices, p.facet[LeadProcessor::wave]->load());
+        for (int i = 0; i < n; ++i) { l[i] *= src->audioGain; r[i] *= src->audioGain; }
+    }
     for (int i = 0; i < n; ++i)
     {
-        float sl = 0.0f, sr_ = 0.0f;
-        for (int u = 0; u < voices; ++u)
-        {
-            auto& ph = phaseA[firstSlot + u];
-            const float s = table.sample (framesA, ph, mipA[u]);
-            ph += incA[u];
-            if (ph >= 1.0) ph -= 1.0;
-            sl += s * gainL[u];
-            sr_ += s * gainR[u];
-        }
+        float sl = playsAudio ? l[i] : 0.0f, sr_ = playsAudio ? r[i] : 0.0f;
+        if (! playsAudio)
+            for (int u = 0; u < voices; ++u)
+            {
+                auto& ph = phaseA[firstSlot + u];
+                const float s = tableA->sample (framesA, ph, mipA[u]) * gainA;
+                ph += incA[u];
+                if (ph >= 1.0) ph -= 1.0;
+                sl += s * gainL[u];
+                sr_ += s * gainR[u];
+            }
         float mono = 0.0f;
         if (levelB > 0.001f)
         {
@@ -265,6 +336,90 @@ void LeadVoice::render (float* l, float* r, int n)
         const float env = ampEnv.next (ampS) * ampGain;
         l[i] = filter.process (0, std::tanh (g * l[i]) * makeup, type) * env;
         r[i] = filter.process (1, std::tanh (g * r[i]) * makeup, type) * env;
+    }
+}
+
+void LeadVoice::renderGrains (float* l, float* r, int n, const SourceData& src, double ratio, const double* detuneRatios,
+                              const float* gl, const float* gr, int voices, float position, float grainSec, float spray)
+{
+    const int len = src.audio.getNumSamples();
+    const float* chL = src.audio.getReadPointer (0);
+    const float* chR = src.audio.getReadPointer (src.audio.getNumChannels() > 1 ? 1 : 0);
+    const double sr = getSampleRate();
+    const int grainLen = juce::jmax (64, (int) (grainSec * sr));
+    const auto& window = hann();
+    for (int i = 0; i < n; ++i)
+    {
+        if (samplesToNextGrain <= 0.0)
+        {
+            // a new grain on one of the unison copies, around the play position (Spray scatters it)
+            auto it = std::find_if (grains.begin(), grains.end(), [] (const Grain& g) { return ! g.active; });
+            if (it != grains.end())
+            {
+                auto& g = *it;
+                g.slot = random.nextInt (voices);
+                const float start = juce::jlimit (0.0f, 1.0f, position + (random.nextFloat() - 0.5f) * spray * 0.3f);
+                g.pos = (double) start * (double) (len - 1);
+                g.age = 0;
+                g.length = grainLen;
+                g.gl = gl[g.slot];
+                g.gr = gr[g.slot];
+                g.active = true;
+            }
+            // four overlapping grains per copy, a little jitter
+            samplesToNextGrain += (double) grainLen * 0.25 / (double) juce::jmax (1, (voices + 1) / 2) * (1.0 + (random.nextDouble() - 0.5) * spray * 0.6);
+        }
+        samplesToNextGrain -= 1.0;
+        float sl = 0.0f, sr_ = 0.0f;
+        for (auto& g : grains)
+        {
+            if (! g.active) continue;
+            const float w = window.at ((float) g.age / (float) g.length);
+            sl += readAt (chL, len, g.pos) * w * g.gl;
+            sr_ += readAt (chR, len, g.pos) * w * g.gr;
+            g.pos += ratio * detuneRatios[juce::jmin (g.slot, voices - 1)];
+            while (g.pos >= (double) (len - 1)) g.pos -= (double) (len - 1);
+            if (++g.age >= g.length) g.active = false;
+        }
+        const float norm = 0.55f / std::sqrt ((float) juce::jmax (1, (voices + 1) / 2));
+        l[i] = sl * norm;
+        r[i] = sr_ * norm;
+    }
+}
+
+void LeadVoice::renderSample (float* l, float* r, int n, const SourceData& src, double ratio, const double* detuneRatios,
+                              const float* gl, const float* gr, int voices, float position)
+{
+    // Plays the sound from the Wave position and loops from there to the end with a short crossfade,
+    // so a held note sustains. Unison copies are playheads at slightly different speeds.
+    const int len = src.audio.getNumSamples();
+    const float* chL = src.audio.getReadPointer (0);
+    const float* chR = src.audio.getReadPointer (src.audio.getNumChannels() > 1 ? 1 : 0);
+    const double start = (double) position * (double) (len - 1);
+    const double loopLen = juce::jmax (256.0, (double) (len - 1) - start);
+    const double xfade = juce::jmin (loopLen * 0.25, src.sampleRate * 0.03);
+    const double end = start + loopLen;
+    for (int i = 0; i < n; ++i)
+    {
+        float sl = 0.0f, sr_ = 0.0f;
+        for (int u = 0; u < voices; ++u)
+        {
+            auto& ph = playPos[u];
+            if (ph >= end) ph -= loopLen;
+            float a = readAt (chL, len, ph), b = readAt (chR, len, ph);
+            if (ph > end - xfade && start - (end - ph) >= 0.0)
+            {
+                const float t = (float) ((ph - (end - xfade)) / xfade);
+                const double other = ph - loopLen;
+                a = a * (1.0f - t) + readAt (chL, len, other) * t;
+                b = b * (1.0f - t) + readAt (chR, len, other) * t;
+            }
+            sl += a * gl[u];
+            sr_ += b * gr[u];
+            ph += ratio * detuneRatios[u];
+        }
+        l[i] = sl * 0.8f;
+        r[i] = sr_ * 0.8f;
     }
 }
 

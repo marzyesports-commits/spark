@@ -23,6 +23,7 @@ namespace
         if (id == "vibDelay")   return v / 1.5f;
         if (id == "level")      return (v + 36.0f) / 42.0f;
         if (id == "filterType") return v / 3.0f;
+        if (id == "oscAMode")   return v / 3.0f;
         if (id == "fxEqLow" || id == "fxEqMid" || id == "fxEqHigh") return (v + 12.0f) / 24.0f;
         if (id == "fxDelayTime") return v / 5.0f;        // 0 = 1/16 .. 5 = 1/2
         if (id == "fxDistType") return v / 3.0f;
@@ -70,6 +71,17 @@ namespace
                     p.extras[id] = norm (id, v);
     }
 
+    // a library sound played as oscillator A (mode: 1 table, 2 grain, 3 sample)
+    void sound (PresetLibrary& lib, const char* name, const char* id, int mode)
+    {
+        for (auto& p : lib.presets)
+            if (p.name == juce::String (name))
+            {
+                p.sound = id;
+                p.extras["oscAMode"] = norm ("oscAMode", (float) mode);
+            }
+    }
+
     // common effect settings
     void delay (PresetLibrary& lib, const char* name, int time, float feedback, float mix)
     {
@@ -94,8 +106,8 @@ PresetLibrary makeLeadPresets()
     PresetLibrary lib;
 
     add (lib, "Supersaw", "Wide unison saws for trance, EDM and big drops", {
-        { "Jade Supersaw",   "The OBSDN sound: wide, bright, singing",       { SAW, .55f, .68f, .30f, .20f, .30f, .25f, .30f }, 7, .005f, .40f, .85f, .25f, L, -8.0f },
-        { "Trance Anthem",   "Soaring 7-voice saw with delay throws",           { SAW, .62f, .74f, .25f, .15f, .25f, .20f, .40f }, 7, .004f, .50f, .80f, .30f, L, -9.0f },
+        { "Jade Supersaw",   "The OBSDN sound: wide, bright, singing",       { SAW, .55f, .68f, .30f, .20f, .30f, .25f, .30f }, 7, .005f, .40f, .85f, .25f, L, -8.5f },
+        { "Trance Anthem",   "Soaring 7-voice saw with delay throws",           { SAW, .62f, .74f, .25f, .15f, .25f, .20f, .40f }, 7, .004f, .50f, .80f, .30f, L, -8.0f },
         { "Hands Up",        "Brighter, tighter supersaw for fast hooks",        { SAW, .48f, .80f, .40f, .25f, .15f, .12f, .25f }, 7, .002f, .30f, .75f, .18f, M, -8.0f },
         { "Euphoria",        "Soft-edged saw stack for emotional breakdowns",    { SAW, .70f, .60f, .15f, .10f, .35f, .30f, .55f }, 7, .03f, .60f, .90f, .45f, L, -9.5f },
         { "Hardstyle Scream","Distorted saw that screams on high notes",         { SAW, .40f, .72f, .45f, .65f, .35f, .15f, .30f }, 5, .003f, .40f, .85f, .20f, M, -9.5f },
@@ -114,7 +126,7 @@ PresetLibrary makeLeadPresets()
     delay (lib, "Pluck Lead", 2, .40f, .22f);
 
     add (lib, "Future", "Glides, squares and sync for future bass and melodic drops", {
-        { "Future Glide",    "Detuned square that slides between notes",         { SQR, .35f, .62f, .30f, .15f, .20f, .45f, .35f }, 5, .01f, .40f, .85f, .25f, L, -5.5f },
+        { "Future Glide",    "Detuned square that slides between notes",         { SQR, .35f, .62f, .30f, .15f, .20f, .45f, .35f }, 5, .01f, .40f, .85f, .25f, L, -6.0f },
         { "Kawaii Square",   "Cute, bouncy square with a quick scoop",           { SQR, .15f, .66f, .35f, .05f, .30f, .20f, .30f }, 3, .003f, .30f, .70f, .15f, M, -9.5f },
         { "Melodic Sync",    "Sync lead that sings with vibrato",                { SYNC, .30f, .70f, .30f, .20f, .40f, .30f, .40f }, 3, .005f, .50f, .85f, .30f, L, -8.0f },
         { "Flume Wobble",    "Squashy pulse with pitch fall-offs",               { PUL, .25f, .52f, .45f, .35f, .15f, .30f, .30f }, 3, .002f, .35f, .60f, .20f, M, -8.0f },
@@ -131,12 +143,12 @@ PresetLibrary makeLeadPresets()
     set (lib, "Melodic Sync", { { "vibDelay", .2f } });
 
     add (lib, "Drill & Trap", "Dark bells, slides and flutes for drill and trap", {
-        { "Drill Slide",     "Dark saw that glides on every overlap",            { SAW, .25f, .48f, .35f, .30f, .10f, .55f, .25f }, 3, .005f, .40f, .80f, .20f, L, -7.0f },
+        { "Drill Slide",     "Dark saw that glides on every overlap",            { SAW, .25f, .48f, .35f, .30f, .10f, .55f, .25f }, 3, .005f, .40f, .80f, .20f, L, -7.5f },
         { "Dark Flute",      "Breathy triangle with slow vibrato",               { TRI, .08f, .55f, .10f, .10f, .40f, .25f, .40f }, 1, .04f, .40f, .90f, .30f, L, -9.0f },
         { "Menace Bell",     "Plucky reed bell for eerie loops",                 { REED, .15f, .60f, .60f, .15f, .00f, .00f, .45f }, 2, .002f, .60f, .10f, .60f, P, -10.0f },
         { "Pluggnb Sine",    "Round sine with a soft glide",                     { SIN, .05f, .55f, .20f, .25f, .25f, .40f, .40f }, 1, .01f, .50f, .80f, .30f, L, -5.5f },
         { "Trap Whistle",    "Thin pulse whistle with wide vibrato",             { THIN, .05f, .75f, .10f, .05f, .55f, .30f, .35f }, 1, .02f, .40f, .90f, .25f, L, -6.5f },
-        { "Tunnel Saw",      "Filtered saw that opens as you play harder",       { SAW, .35f, .40f, .55f, .25f, .10f, .20f, .30f }, 3, .005f, .40f, .75f, .25f, M, -8.5f },
+        { "Tunnel Saw",      "Filtered saw that opens as you play harder",       { SAW, .35f, .40f, .55f, .25f, .10f, .20f, .30f }, 3, .005f, .40f, .75f, .25f, M, -9.0f },
     });
     set (lib, "Dark Flute", { { "noiseLevel", .25f }, { "vibRate", 4.5f }, { "vibDelay", .35f } });
     set (lib, "Menace Bell", { { "oscBLevel", .35f }, { "oscBSemi", 19 }, { "oscBWave", SIN }, { "fltD", .35f } });
@@ -150,9 +162,9 @@ PresetLibrary makeLeadPresets()
     add (lib, "Afro & Amapiano", "Flutes, whistles and plucks with bounce", {
         { "Afro Flute",      "Breathy flute for afrobeats toplines",             { TRI, .10f, .62f, .15f, .10f, .30f, .15f, .35f }, 1, .03f, .40f, .85f, .20f, L, -9.0f },
         { "Piano Whistle",   "Clean whistle lead for amapiano",                  { SIN, .05f, .80f, .10f, .15f, .35f, .20f, .40f }, 1, .02f, .40f, .90f, .25f, L, -9.5f },
-        { "Steel Pluck",     "Bright, bouncy pluck (Poly)",                      { PUL, .15f, .58f, .65f, .10f, .00f, .00f, .30f }, 2, .002f, .30f, .10f, .25f, P, -7.5f },
+        { "Steel Pluck",     "Bright, bouncy pluck (Poly)",                      { PUL, .15f, .58f, .65f, .10f, .00f, .00f, .30f }, 2, .002f, .30f, .10f, .25f, P, -7.0f },
         { "Log Lead",        "Woody reed with a quick scoop",                    { REED, .10f, .52f, .45f, .20f, .10f, .10f, .25f }, 1, .003f, .30f, .40f, .20f, M, -7.5f },
-        { "Sax Reed",        "Reedy lead with breath and fall-offs",             { REED, .15f, .64f, .30f, .30f, .40f, .20f, .35f }, 2, .02f, .40f, .85f, .20f, L, -7.5f },
+        { "Sax Reed",        "Reedy lead with breath and fall-offs",             { REED, .15f, .64f, .30f, .30f, .40f, .20f, .35f }, 2, .02f, .40f, .85f, .20f, L, -8.0f },
         { "Kalimba Lead",    "Soft tine pluck, great for riffs",                 { TRI, .05f, .66f, .50f, .10f, .00f, .00f, .35f }, 1, .002f, .45f, .05f, .35f, P, -8.5f },
     });
     set (lib, "Afro Flute", { { "noiseLevel", .30f }, { "vibDelay", .25f }, { "scoop", .20f } });
@@ -165,10 +177,10 @@ PresetLibrary makeLeadPresets()
     delay (lib, "Steel Pluck", 2, .35f, .2f);
 
     add (lib, "Retro 80s", "Brassy, chorused leads from the synthwave era", {
-        { "Synthwave Lead",  "Chorused saw with a slow vibrato",                 { SAW, .30f, .58f, .30f, .20f, .30f, .20f, .45f }, 3, .01f, .50f, .85f, .35f, L, -5.5f },
-        { "Jump Brass",      "Stabby brass lead (Poly)",                         { SAW, .30f, .50f, .55f, .20f, .05f, .00f, .30f }, 3, .02f, .35f, .60f, .20f, P, -9.5f },
+        { "Synthwave Lead",  "Chorused saw with a slow vibrato",                 { SAW, .30f, .58f, .30f, .20f, .30f, .20f, .45f }, 3, .01f, .50f, .85f, .35f, L, -6.0f },
+        { "Jump Brass",      "Stabby brass lead (Poly)",                         { SAW, .30f, .50f, .55f, .20f, .05f, .00f, .30f }, 3, .02f, .35f, .60f, .20f, P, -9.0f },
         { "Square 84",       "Hollow square lead, straight out of 1984",         { SQR, .20f, .56f, .25f, .10f, .30f, .20f, .40f }, 2, .005f, .40f, .85f, .30f, M, -10.0f },
-        { "Miami Night",     "Pulse lead with lush chorus and delay",            { PUL, .25f, .62f, .25f, .10f, .25f, .25f, .45f }, 3, .01f, .50f, .80f, .35f, L, -6.5f },
+        { "Miami Night",     "Pulse lead with lush chorus and delay",            { PUL, .25f, .62f, .25f, .10f, .25f, .25f, .45f }, 3, .01f, .50f, .80f, .35f, L, -6.0f },
         { "Neon Sync",       "Classic sync sweep lead",                          { SYNC, .20f, .66f, .45f, .25f, .25f, .15f, .35f }, 2, .005f, .40f, .80f, .25f, M, -8.0f },
         { "Poly Stab",       "Chord stab for retro riffs",                       { SQR, .35f, .54f, .50f, .15f, .00f, .00f, .35f }, 3, .003f, .30f, .20f, .25f, P, -4.5f },
     });
@@ -205,6 +217,32 @@ PresetLibrary makeLeadPresets()
     dist (lib, "Acid Squelch", 0, .35f, .5f);
     set (lib, "Theremin", { { "vibRate", 5.0f }, { "vibDelay", .4f } });
     set (lib, "Screamer", { { "resonance", .35f } });
+    // ---- sound design: leads made from Spark's sound library
+    add (lib, "Sound Design", "Leads built from sounds: vowels, bells, textures and wavetables", {
+        { "Vox Lead",        "A sung vowel as a playable lead (grains)",        { .35f, .25f, .75f, .15f, .15f, .40f, .30f, .40f }, 3, .02f, .40f, .90f, .30f, L, -5.5f },
+        { "Choir Glide",     "Airy choir grains that glide between notes",      { .40f, .45f, .70f, .05f, .05f, .30f, .45f, .55f }, 5, .06f, .50f, .90f, .45f, L, 1.5f },
+        { "Formant Table",   "Talking wavetable, wide and vocal",               { .45f, .40f, .72f, .30f, .20f, .30f, .25f, .35f }, 5, .005f, .40f, .85f, .25f, L, -8.0f },
+        { "Digital Shard",   "Glassy digital table with bite",                  { .60f, .35f, .78f, .45f, .25f, .20f, .15f, .30f }, 3, .003f, .35f, .80f, .20f, M, -8.0f },
+        { "FM Glass",        "Bell-like FM table for bright hooks",             { .30f, .20f, .80f, .35f, .10f, .25f, .10f, .40f }, 3, .003f, .50f, .60f, .35f, M, -8.5f },
+        { "PWM Hero",        "Pulse-width table, classic and moving",           { .50f, .45f, .66f, .30f, .20f, .30f, .20f, .35f }, 5, .005f, .40f, .85f, .25f, L, -7.5f },
+        { "Bell Table",      "A music box turned into a sustained lead",        { .20f, .15f, .82f, .20f, .05f, .30f, .20f, .45f }, 3, .005f, .50f, .75f, .35f, L, -8.0f },
+        { "Whistle Grain",   "Breathy whistle grains with slow vibrato",        { .45f, .15f, .78f, .05f, .05f, .45f, .30f, .40f }, 1, .03f, .40f, .90f, .30f, L, -9.5f },
+        { "Kalimba Chop",    "The kalimba itself, pitched and chopped (Poly)",  { .00f, .10f, .85f, .20f, .05f, .00f, .00f, .35f }, 1, .002f, .60f, .10f, .40f, P, -9.0f },
+        { "Breath Texture",  "Vocal breath grains: a lead made of air",         { .30f, .30f, .70f, .10f, .10f, .25f, .30f, .55f }, 3, .08f, .50f, .90f, .50f, L, -3.0f },
+    });
+    sound (lib, "Vox Lead", "vox_ah", 2);          set (lib, "Vox Lead", { { "grainSize", .35f }, { "grainSpray", .15f } });
+    sound (lib, "Choir Glide", "pad_choir", 2);    set (lib, "Choir Glide", { { "grainSize", .45f }, { "grainSpray", .35f } });
+    sound (lib, "Formant Table", "wt_formant", 1); set (lib, "Formant Table", { { "scanTime", .45f } });
+    sound (lib, "Digital Shard", "wt_digital", 1);
+    sound (lib, "FM Glass", "wt_fm", 1);           set (lib, "FM Glass", { { "scanTime", .35f } });
+    sound (lib, "PWM Hero", "wt_pwm", 1);          set (lib, "PWM Hero", { { "scanTime", .55f } });
+    sound (lib, "Bell Table", "key_musicbox", 1);
+    sound (lib, "Whistle Grain", "lead_whistle", 2); set (lib, "Whistle Grain", { { "grainSize", .30f }, { "noiseLevel", .10f } });
+    sound (lib, "Kalimba Chop", "key_kalimba", 3);
+    sound (lib, "Breath Texture", "vox_breath", 2); set (lib, "Breath Texture", { { "grainSize", .50f }, { "grainSpray", .60f } });
+    delay (lib, "Vox Lead", 2, .35f, .2f);
+    delay (lib, "Bell Table", 3, .40f, .22f);
+    chorus (lib, "Choir Glide", .4f, .3f);
     return lib;
 }
 } // namespace spark

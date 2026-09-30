@@ -5,6 +5,7 @@
 #include "Common/Wavetable.h"
 #include "Common/Envelope.h"
 #include "Instrument/FxHost.h"
+#include "Instrument/SourceData.h"
 #include "Riff.h"
 
 namespace spark
@@ -38,6 +39,8 @@ class LeadProcessor : public SparkProcessorBase,
 public:
     enum Facet { wave, detune, tone, bite, drive, vibrato, glide, space };
     enum VoiceMode { poly = 0, mono = 1, legato = 2 };
+    // Oscillator A's source: the built-in shapes, or a sound played as a wavetable, as grains, or as itself
+    enum OscMode { waves = 0, table = 1, grain = 2, sample = 3 };
 
     LeadProcessor();
     ~LeadProcessor() override;
@@ -51,6 +54,7 @@ public:
     {
         std::atomic<float>* facet[numFacets] {};
         std::atomic<float> *unison = nullptr, *width = nullptr;
+        std::atomic<float> *oscAMode = nullptr, *scanTime = nullptr, *grainSize = nullptr, *grainSpray = nullptr;
         std::atomic<float> *oscBWave = nullptr, *oscBSemi = nullptr, *oscBFine = nullptr, *oscBLevel = nullptr;
         std::atomic<float> *subLevel = nullptr, *noiseLevel = nullptr;
         std::atomic<float> *voiceMode = nullptr, *bendRange = nullptr;
@@ -90,6 +94,18 @@ public:
     float getRiffPlayhead() const noexcept { return riffPlayhead.load(); }
     juce::String riffName() const;
 
+    // ---- sound design: oscillator A's source (message thread unless noted)
+    SourceData::Ptr getSource() const;                               // any thread: may be null (built-in waves)
+    OscMode getOscMode() const noexcept { return (OscMode) juce::roundToInt (params.oscAMode->load()); }
+    void setOscMode (OscMode);
+    bool loadFile (const juce::File&, juce::String& error);          // drop any sound: tables become TABLE, the rest GRAIN
+    bool loadFactorySound (const juce::String& id, bool fromPreset = false);
+    bool shapeshift (const juce::File&, juce::String& summary);      // rebuild a bounced synth note as a table
+    void clearSource();                                              // back to the built-in waves
+    juce::String getSupportedExtensions() const { return formats.getWildcardForAllFormats(); }
+    juce::String getLastShapeshiftSummary() const { return lastShapeshift; }
+    juce::String sourceName() const;
+
     // ---- SparkProcessorBase
     std::vector<juce::RangedAudioParameter*> getRandomisableExtras() const override;
     void getCoreShape (std::vector<float>& out, int n) override;
@@ -111,9 +127,18 @@ public:
 protected:
     void writeExtraState (juce::ValueTree&) override;
     void readExtraState (const juce::ValueTree&) override;
+    void applyPresetSound (const Preset&) override;
+    juce::String currentSoundId() const override;
 
 private:
     void timerCallback() override;
+    void installSource (SourceData::Ptr);
+    juce::AudioFormatManager formats;
+    SourceData::Ptr source;
+    mutable juce::SpinLock sourceLock;
+    juce::ReferenceCountedArray<SourceData> retired;   // freed on the message thread
+    juce::String lastShapeshift;
+    std::shared_ptr<std::atomic<int>> modeForDisplay;  // lets the Wave facet describe itself for the current mode
     void pushRiffToAudio();
 
     LeadSynth synth;

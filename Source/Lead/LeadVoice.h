@@ -36,6 +36,11 @@ public:
 private:
     void startGlide();
     void render (float* l, float* r, int n);
+    // oscillator A from a sound: grains or straight playback (unison copies are detuned playheads)
+    void renderGrains (float* l, float* r, int n, const SourceData&, double ratio, const double* detuneRatios,
+                       const float* gl, const float* gr, int voices, float position, float grainSec, float spray);
+    void renderSample (float* l, float* r, int n, const SourceData&, double ratio, const double* detuneRatios,
+                       const float* gl, const float* gr, int voices, float position);
 
     LeadProcessor& processor;
     Envelope ampEnv, fltEnv;
@@ -54,6 +59,13 @@ private:
     float scoopNow = 0.0f;        // semitones below the note, easing to 0
     float driveNow = 0.0f, cutoffNow = 1000.0f;
     float noiseLp = 0.0f;
+
+    SourceData::Ptr source;       // grabbed at note start so it can't change under us
+    struct Grain { bool active = false; double pos = 0.0, rate = 1.0; int age = 0, length = 1, slot = 0; float gl = 0.7f, gr = 0.7f; };
+    std::array<Grain, 48> grains;
+    double samplesToNextGrain = 0.0;
+    double playPos[maxUnison] {};   // sample playheads
+    double noteSeconds = 0.0;       // for the table scan
     juce::AudioBuffer<float> scratch;
 };
 } // namespace spark

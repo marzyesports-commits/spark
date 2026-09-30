@@ -1,6 +1,8 @@
 #include "LeadProcessor.h"
 #include "LeadVoice.h"
 #include "LeadEditor.h"
+#include "Instrument/FactorySounds.h"
+#include "Instrument/Shapeshift.h"
 
 namespace spark
 {
@@ -19,10 +21,24 @@ namespace leadfmt
 
 namespace
 {
+    // The Wave facet's text depends on oscillator A's mode; the processor keeps this up to date.
+    thread_local std::shared_ptr<std::atomic<int>> pendingModeRef;
+
     std::vector<FacetSpec> leadFacets()
     {
+        auto mode = std::make_shared<std::atomic<int>> (0);
+        pendingModeRef = mode;
         return {
-            { "wave",    "WAVE",    0.29f, [] (float v) { return LeadProcessor::describeWave (v); }, "Oscillator shape: sine, triangle, saw, square, pulses, sync and reed" },
+            { "wave",    "WAVE",    0.29f, [mode] (float v)
+              {
+                  switch (mode->load())
+                  {
+                      case LeadProcessor::table:  return "Frame " + juce::String (juce::roundToInt (v * 100.0f)) + "%";
+                      case LeadProcessor::grain:
+                      case LeadProcessor::sample: return "Position " + juce::String (juce::roundToInt (v * 100.0f)) + "%";
+                      default:                    return LeadProcessor::describeWave (v);
+                  }
+              }, "Oscillator A: the shape (Waves), the frame (Table) or where in the sound it plays (Grain, Sample)" },
             { "detune",  "DETUNE",  0.45f, fmt::percent, "Spread of the unison stack: from one clean oscillator to a wide supersaw" },
             { "tone",    "TONE",    0.62f, leadfmt::cutoff, "Filter cutoff" },
             { "bite",    "BITE",    0.35f, fmt::percent, "Filter envelope and resonance: the pluck and snap at the start of each note" },
@@ -59,6 +75,11 @@ namespace
         add (std::make_unique<juce::AudioParameterInt> (juce::ParameterID { "unison", 1 }, "Unison", 1, LeadVoice::maxUnison, 5,
              juce::AudioParameterIntAttributes().withStringFromValueFunction ([] (int v, int) { return v == 1 ? juce::String ("1 voice") : juce::String (v) + " voices"; })));
         flt ("width", "Width", unit, 0.7f, pct);
+        choice ("oscAMode", "Osc A Source", { "Waves", "Table", "Grain", "Sample" }, LeadProcessor::waves);
+        flt ("scanTime", "Table Scan", unit, 0.0f,
+             juce::AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return v <= 0.001f ? juce::String ("Off") : fmt::envTime (v); }));
+        flt ("grainSize", "Grain Size", unit, 0.3f, juce::AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return fmt::grainMs (v); }));
+        flt ("grainSpray", "Grain Spray", unit, 0.25f, pct);
         flt ("oscBWave", "Osc B Wave", unit, 2.0f / 7.0f, juce::AudioParameterFloatAttributes().withStringFromValueFunction ([] (float v, int) { return LeadProcessor::describeWave (v); }));
         add (std::make_unique<juce::AudioParameterInt> (juce::ParameterID { "oscBSemi", 1 }, "Osc B Pitch", -24, 24, 0,
              juce::AudioParameterIntAttributes().withStringFromValueFunction ([] (int v, int) { return (v > 0 ? "+" : "") + juce::String (v) + " st"; })));
@@ -201,6 +222,11 @@ LeadProcessor::LeadProcessor()
         params.facet[i] = apvts.getRawParameterValue (getFacets()[(size_t) i].id);
     auto raw = [this] (const char* id) { return apvts.getRawParameterValue (id); };
     params.unison = raw ("unison");        params.width = raw ("width");
+    params.oscAMode = raw ("oscAMode");    params.scanTime = raw ("scanTime");
+    params.grainSize = raw ("grainSize");  params.grainSpray = raw ("grainSpray");
+    modeForDisplay = pendingModeRef;
+    pendingModeRef.reset();
+    formats.registerBasicFormats();
     params.oscBWave = raw ("oscBWave");    params.oscBSemi = raw ("oscBSemi");
     params.oscBFine = raw ("oscBFine");    params.oscBLevel = raw ("oscBLevel");
     params.subLevel = raw ("subLevel");    params.noiseLevel = raw ("noiseLevel");
@@ -371,6 +397,12 @@ juce::File LeadProcessor::exportRiffMidi() const
 
 void LeadProcessor::timerCallback()
 {
+    if (modeForDisplay != nullptr)
+        modeForDisplay->store (getOscMode());
+    for (int i = retired.size(); --i >= 0;)
+        if (retired.getObjectPointerUnchecked (i)->getReferenceCount() <= 1)
+            retired.remove (i);
+
     // Changing the style, length, density or range rewrites the riff from its seed, so you hear the change
     const auto s = riffSettings();
     const std::array<float, 4> now { (float) s.style, (float) s.bars, s.density, s.range };
@@ -395,6 +427,11 @@ std::vector<juce::RangedAudioParameter*> LeadProcessor::getRandomisableExtras() 
         out.push_back (apvts.getParameter ("oscBWave"));
         out.push_back (apvts.getParameter ("oscBLevel"));
     }
+    if (getOscMode() == grain)
+    {
+        out.push_back (apvts.getParameter ("grainSize"));
+        out.push_back (apvts.getParameter ("grainSpray"));
+    }
     if (params.subLevel->load() > 0.01f) out.push_back (apvts.getParameter ("subLevel"));
     if (params.noiseLevel->load() > 0.01f) out.push_back (apvts.getParameter ("noiseLevel"));
     return out;
@@ -406,7 +443,22 @@ void LeadProcessor::getCoreShape (std::vector<float>& out, int n)
     const auto& table = waveTable();
     const float last = (float) (table.getNumFrames() - 1);
     std::vector<float> a, b;
-    table.getFrameShape (params.facet[wave]->load() * last, a, n);
+    const auto src = getSource();
+    const int mode = getOscMode();
+    if (src != nullptr && mode == LeadProcessor::table && src->table != nullptr)
+        src->table->getFrameShape (params.facet[wave]->load() * (float) (src->table->getNumFrames() - 1), a, n);
+    else if (src != nullptr && (mode == grain || mode == sample) && src->audio.getNumSamples() > 64)
+    {
+        // the stretch of sound under the play position, wrapped into a ring
+        const int len = src->audio.getNumSamples();
+        const int span = juce::jlimit (n, len, (int) (0.02 * src->sampleRate));
+        const int start = juce::jlimit (0, juce::jmax (0, len - span), (int) (params.facet[wave]->load() * (float) len) - span / 2);
+        const float* d = src->audio.getReadPointer (0);
+        a.resize ((size_t) n);
+        for (int i = 0; i < n; ++i) a[(size_t) i] = d[start + (int) ((juce::int64) i * span / n)];
+    }
+    else
+        table.getFrameShape (params.facet[wave]->load() * last, a, n);
     const float levelB = params.oscBLevel->load();
     if (levelB > 0.01f)
         table.getFrameShape (params.oscBWave->load() * last, b, n);
@@ -527,12 +579,61 @@ juce::AudioProcessorEditor* LeadProcessor::createEditor()
 void LeadProcessor::writeExtraState (juce::ValueTree& extra)
 {
     writeRackState (extra);
+    if (auto s = getSource())
+    {
+        if (s->factoryId.isNotEmpty() && ! s->shapeshifted)
+            extra.setProperty ("factorySound", s->factoryId, nullptr);   // library sounds are saved by name
+        else
+        {
+            extra.setProperty ("sourceName", s->name, nullptr);
+            extra.setProperty ("tableFrame", s->tableFrameLength, nullptr);
+            extra.setProperty ("rootNote", (double) s->rootNote, nullptr);
+            extra.setProperty ("shapeshift", s->shapeshifted, nullptr);
+            extra.setProperty ("sourceAudio", s->getEmbeddedAudio(), nullptr);   // travels with the project
+        }
+    }
     extra.setProperty ("riff", currentRiff.toString(), nullptr);
 }
 
 void LeadProcessor::readExtraState (const juce::ValueTree& extra)
 {
     readRackState (extra);
+    if (const auto id = extra.getProperty ("factorySound").toString(); id.isNotEmpty())
+        loadFactorySound (id, true);
+    else if (const auto embedded = extra.getProperty ("sourceAudio").toString(); embedded.isNotEmpty())
+    {
+        juce::MemoryBlock block;
+        if (block.fromBase64Encoding (embedded))
+        {
+            juce::FlacAudioFormat flac;
+            std::unique_ptr<juce::AudioFormatReader> reader (flac.createReaderFor (new juce::MemoryInputStream (block, false), true));
+            if (reader != nullptr && reader->lengthInSamples > 64)
+            {
+                juce::AudioBuffer<float> audio ((int) juce::jlimit (1u, 2u, reader->numChannels), (int) reader->lengthInSamples);
+                reader->read (&audio, 0, audio.getNumSamples(), 0, true, audio.getNumChannels() > 1);
+                const bool shifted = extra.getProperty ("shapeshift", false);
+                SourceData::Ptr s;
+                if (shifted)
+                {
+                    const auto result = shapeshift::analyse (audio, reader->sampleRate);
+                    s = new SourceData();
+                    s->audio = std::move (audio);
+                    s->sampleRate = reader->sampleRate;
+                    s->table = Wavetable::fromFrames (result.ok ? result.frames : std::vector<std::vector<float>> {});
+                    s->shapeshifted = true;
+                    s->computePeaks();
+                    s->computeGains();
+                }
+                else
+                    s = SourceData::make (std::move (audio), reader->sampleRate, {}, {}, (int) extra.getProperty ("tableFrame", 0));
+                s->name = extra.getProperty ("sourceName").toString();
+                s->rootNote = (float) (double) extra.getProperty ("rootNote", 60.0);
+                installSource (s);
+            }
+        }
+    }
+    else
+        installSource (nullptr);
     const auto text = extra.getProperty ("riff").toString();
     syncRiffSettings = true;   // the riff settings arrive after this; don't rewrite the saved riff when they do
     if (text.isNotEmpty())
@@ -544,6 +645,184 @@ void LeadProcessor::readExtraState (const juce::ValueTree& extra)
             setRiff (r);
         }
     }
+}
+// =====================================================================================
+SourceData::Ptr LeadProcessor::getSource() const
+{
+    const juce::SpinLock::ScopedLockType lock (sourceLock);
+    return source;
+}
+
+void LeadProcessor::installSource (SourceData::Ptr s)
+{
+    SourceData::Ptr old;
+    {
+        const juce::SpinLock::ScopedLockType lock (sourceLock);
+        old = source;
+        source = s;
+    }
+    if (old != nullptr)
+        retired.add (old);
+    sendChangeMessage();
+}
+
+void LeadProcessor::setOscMode (OscMode m)
+{
+    setParam ("oscAMode", (float) m / 3.0f);
+    if (modeForDisplay != nullptr)
+        modeForDisplay->store (m);
+}
+
+juce::String LeadProcessor::sourceName() const
+{
+    auto s = getSource();
+    return s != nullptr ? s->name : juce::String();
+}
+
+void LeadProcessor::clearSource()
+{
+    installSource (nullptr);
+    setOscMode (waves);
+}
+
+bool LeadProcessor::loadFile (const juce::File& file, juce::String& error)
+{
+    std::unique_ptr<juce::AudioFormatReader> reader (formats.createReaderFor (file));
+    if (reader == nullptr)
+    {
+        error = "OBSDN can't read " + file.getFileName() + ". Try a WAV, AIFF or FLAC file.";
+        return false;
+    }
+    const int len = (int) juce::jmin (reader->lengthInSamples, (juce::int64) (reader->sampleRate * 60.0));
+    if (len < 64)
+    {
+        error = file.getFileName() + " is too short to use.";
+        return false;
+    }
+    juce::AudioBuffer<float> audio ((int) juce::jlimit (1u, 2u, reader->numChannels), len);
+    reader->read (&audio, 0, len, 0, true, audio.getNumChannels() > 1);
+    if (audio.getMagnitude (0, len) < 1.0e-5f)
+    {
+        error = file.getFileName() + " is silent.";
+        return false;
+    }
+    const int clmFrame = Wavetable::readClmFrameSize (file);
+    const bool looksLikeTable = clmFrame > 0
+        || (len % Wavetable::frameSize == 0 && len / Wavetable::frameSize >= 2 && len / Wavetable::frameSize <= Wavetable::maxFrames);
+    auto s = SourceData::make (std::move (audio), reader->sampleRate > 0 ? reader->sampleRate : 44100.0, file.getFileName(), file,
+                               looksLikeTable ? (clmFrame > 0 ? clmFrame : Wavetable::frameSize) : 0);
+    if (! looksLikeTable)
+        if (const float midi = shapeshift::detectMidiNote (s->audio, s->sampleRate); midi > 0.0f)
+            s->rootNote = midi;
+    installSource (s);
+    setOscMode (looksLikeTable ? table : grain);
+    return true;
+}
+
+bool LeadProcessor::loadFactorySound (const juce::String& id, bool fromPreset)
+{
+    const auto* info = factory::find (id);
+    juce::AudioBuffer<float> audio;
+    double sr = 44100.0;
+    if (info == nullptr)
+        return false;
+    if (auto current = getSource(); current != nullptr && current->factoryId == id && ! current->shapeshifted)
+    {
+        if (! fromPreset) setOscMode (info->tableFrame > 0 ? table : grain);
+        return true;
+    }
+    if (! factory::decode (id, audio, sr))
+        return false;
+    auto s = SourceData::make (std::move (audio), sr, info->name, {}, info->tableFrame);
+    s->rootNote = info->root;
+    s->factoryId = id;
+    installSource (s);
+    if (! fromPreset)
+        setOscMode (info->tableFrame > 0 ? table : (info->category == "Drums & Perc" ? sample : grain));
+    return true;
+}
+
+void LeadProcessor::applyPresetSound (const Preset& p)
+{
+    if (p.sound.isNotEmpty())
+        loadFactorySound (p.sound, true);
+}
+
+juce::String LeadProcessor::currentSoundId() const
+{
+    auto s = getSource();
+    return s != nullptr && ! s->shapeshifted && getOscMode() != waves ? s->factoryId : juce::String();
+}
+
+bool LeadProcessor::shapeshift (const juce::File& file, juce::String& summary)
+{
+    juce::AudioBuffer<float> audio;
+    double sampleRate = 44100.0;
+    juce::String name;
+    if (file != juce::File())
+    {
+        std::unique_ptr<juce::AudioFormatReader> reader (formats.createReaderFor (file));
+        if (reader == nullptr)
+        {
+            summary = "OBSDN can't read " + file.getFileName() + ". Try a WAV, AIFF or FLAC file.";
+            return false;
+        }
+        const int len = (int) juce::jmin (reader->lengthInSamples, (juce::int64) (reader->sampleRate * 20.0));
+        audio.setSize ((int) juce::jlimit (1u, 2u, reader->numChannels), len);
+        reader->read (&audio, 0, len, 0, true, audio.getNumChannels() > 1);
+        sampleRate = reader->sampleRate > 0 ? reader->sampleRate : 44100.0;
+        name = file.getFileName();
+    }
+    else if (auto current = getSource())
+    {
+        audio = current->audio;
+        sampleRate = current->sampleRate;
+        name = current->name;
+    }
+    else
+    {
+        summary = "Choose a sound first: bounce one note from Serum, Serum 2 or Vital as a WAV.";
+        return false;
+    }
+
+    const auto result = shapeshift::analyse (audio, sampleRate);
+    if (! result.ok)
+    {
+        summary = result.error;
+        return false;
+    }
+    SourceData::Ptr src (new SourceData());
+    src->audio = std::move (audio);
+    src->sampleRate = sampleRate;
+    src->name = name;
+    src->rootNote = result.midiNote;
+    src->shapeshifted = true;
+    src->table = Wavetable::fromFrames (result.frames);
+    src->computePeaks();
+    src->computeGains();
+    installSource (src);
+
+    // Rebuild it with OBSDN's controls: the table plays through the note's evolution, the filter opens
+    // (the timbre is in the frames) and the amp envelope matches the original.
+    setOscMode (table);
+    setParam ("scanTime", shapeshift::timeToParam (result.scanSeconds * 0.5f));
+    setParam ("ampA", shapeshift::timeToParam (result.attack));
+    setParam ("ampD", shapeshift::timeToParam (result.decay));
+    setParam ("ampS", result.sustain);
+    setParam ("ampR", shapeshift::timeToParam (result.release));
+    setParam ("unison", 0.0f);
+    FacetValues f = currentFacetValues();
+    f[wave] = 0.0f;
+    f[detune] = 0.0f;
+    f[tone] = 1.0f;
+    f[bite] = 0.0f;
+    f[drive] = 0.0f;
+    applyFacetValues (f);
+    lineage.push (currentFacetValues(), (juce::uint32) juce::Random::getSystemRandom().nextInt(), currentExtraValues());
+    lastShapeshift = result.summary;
+    summary = result.summary;
+    sendChangeMessage();
+    return true;
 }
 } // namespace spark
 

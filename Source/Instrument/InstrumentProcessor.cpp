@@ -100,27 +100,6 @@ namespace
     }
 }
 
-void SourceData::computePeaks()
-{
-    const int bins = 256;
-    peaks.assign ((size_t) bins, 0.0f);
-    const int len = audio.getNumSamples();
-    if (len == 0)
-        return;
-    float maxPeak = 1.0e-6f;
-    for (int b = 0; b < bins; ++b)
-    {
-        const int s0 = (int) ((juce::int64) b * len / bins);
-        const int s1 = juce::jmax (s0 + 1, (int) ((juce::int64) (b + 1) * len / bins));
-        float pk = 0.0f;
-        for (int c = 0; c < audio.getNumChannels(); ++c)
-            pk = juce::jmax (pk, audio.getMagnitude (c, s0, s1 - s0));
-        peaks[(size_t) b] = pk;
-        maxPeak = juce::jmax (maxPeak, pk);
-    }
-    for (auto& p : peaks) p /= maxPeak;
-}
-
 InstrumentProcessor::InstrumentProcessor()
     : SparkProcessorBase (BusesProperties().withOutput ("Output", juce::AudioChannelSet::stereo(), true),
                           instrumentFacets(), addInstrumentParameters, makeInstrumentPresets(), "instrument"),
@@ -263,38 +242,7 @@ juce::String InstrumentProcessor::getSupportedExtensions() const
 SourceData::Ptr InstrumentProcessor::makeSource (juce::AudioBuffer<float> audio, double sampleRate, const juce::String& name,
                                                 const juce::File& file, int tableFrameLength)
 {
-    SourceData::Ptr s (new SourceData());
-    s->audio = std::move (audio);
-    s->sampleRate = sampleRate;
-    s->name = name;
-    s->file = file;
-    s->tableFrameLength = tableFrameLength;
-    s->loadedAsWavetable = tableFrameLength > 0;
-    s->table = tableFrameLength > 0 ? Wavetable::fromTableAudio (s->audio, tableFrameLength)
-                                    : Wavetable::fromSample (s->audio);
-    s->computePeaks();
-    return s;
-}
-
-juce::String SourceData::getEmbeddedAudio() const
-{
-    const juce::ScopedLock sl (embedLock);
-    if (embedded.isNotEmpty() || audio.getNumSamples() == 0)
-        return embedded;
-
-    juce::FlacAudioFormat flac;
-    juce::MemoryBlock block;
-    {
-        std::unique_ptr<juce::OutputStream> os (new juce::MemoryOutputStream (block, false));
-        auto writer = flac.createWriterFor (os, juce::AudioFormatWriterOptions()
-                                                    .withSampleRate (juce::jlimit (8000.0, 192000.0, sampleRate))
-                                                    .withNumChannels (audio.getNumChannels())
-                                                    .withBitsPerSample (24));
-        if (writer == nullptr || ! writer->writeFromAudioSampleBuffer (audio, 0, audio.getNumSamples()))
-            return {};
-    } // writer flushes and closes here
-    embedded = block.toBase64Encoding();
-    return embedded;
+    return SourceData::make (std::move (audio), sampleRate, name, file, tableFrameLength);
 }
 
 bool InstrumentProcessor::loadFile (const juce::File& file, juce::String& error)

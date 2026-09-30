@@ -12,7 +12,7 @@ permissions:
 
 env:
   VERSION: 1.5.0        # Spark. A "-dev" version builds and tests but doesn't publish; a version that's already released isn't re-published
-  OBSDN_VERSION: 0.2.0  # OBSDN (published as a pre-release while it's in beta)
+  OBSDN_VERSION: 0.3.0  # OBSDN (published as a pre-release while it's in beta)
 
 jobs:
   macos:
@@ -298,7 +298,9 @@ jobs:
           prerelease: true
           make_latest: false
           body: |
-            **OBSDN** (beta): a lead synth that writes its own riffs. Up to 7-voice unison wavetable oscillators, a second oscillator, sub and breath, a filter with its own envelope, delayed vibrato, scoops, fall-offs and glide, a 7-effect rack, and 42 presets across Supersaw, Future, Drill & Trap, Afro & Amapiano, Retro 80s, Chip and Classic. Strike the jade stone to roll new variations.
+            **OBSDN** (beta): a lead synth that writes its own riffs. Up to 7-voice unison wavetable oscillators, a second oscillator, sub and breath, a filter with its own envelope, delayed vibrato, scoops, fall-offs and glide, a 7-effect rack, and 52 presets across Supersaw, Future, Drill & Trap, Afro & Amapiano, Retro 80s, Chip, Classic and Sound Design. Strike the jade stone to roll new variations.
+
+            **Sound design**: oscillator A can play any sound. Drop in a file, pick one of Spark's 82 library sounds, or Shapeshift a note bounced from Serum or Vital, then play it as a wavetable (TABLE), as grains (GRAIN) or as itself (SAMPLE), stacked with up to 7 unison voices.
 
             **RIFF** writes lead lines: pick a key, scale and style (Pop, Trance, Future, Drill, Afro, Chip, Anthem), press Generate, then hold a key to play the riff in time with your DAW. Mutate, Rhythm and Answer rework it; drag **DRAG MIDI** onto a track to keep it.
 

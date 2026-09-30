@@ -32,31 +32,46 @@ class WaveView : public juce::Component,
                  private juce::Timer
 {
 public:
-    WaveView (LeadProcessor&, juce::RangedAudioParameter& wave, std::function<juce::String()> caption);
+    // followsSource: this is oscillator A, which can also show a loaded sound (table, grains or sample)
+    WaveView (LeadProcessor&, juce::RangedAudioParameter& wave, std::function<juce::String()> caption, bool followsSource = false);
     void paint (juce::Graphics&) override;
+    bool dragHover = false;
 
 private:
     void timerCallback() override;
+    juce::String signature() const;
     LeadProcessor& processor;
     juce::RangedAudioParameter& wave;
     std::function<juce::String()> caption;
-    float shownWave = -1.0f;
-    juce::String shownCaption;
+    bool followsSource;
+    juce::String shown;
 };
 
-// LEAD page, left column: the two oscillators, layers and play mode.
-class OscPanel : public juce::Component
+// LEAD page, left column: oscillator A (built-in waves or a sound), oscillator B, layers and play mode.
+class OscPanel : public juce::Component,
+                 private juce::Timer
 {
 public:
     explicit OscPanel (LeadProcessor&);
     void paint (juce::Graphics&) override;
     void resized() override;
+    void setDragHover (bool h) { waveA.dragHover = h; waveA.repaint(); }
+    std::function<void (const juce::String& title, const juce::String& text)> onMessage;
+    void showSoundsMenu();
+    void importSound();
+    void startShapeshift();
 
 private:
+    void timerCallback() override;   // shows the controls that go with oscillator A's mode
+    void layoutModeRow();
     LeadProcessor& processor;
+    PillButton sounds { "SOUNDS", PillButton::Style::goldOutline, Icon::chevronDown };
+    ChoiceSegments oscMode;
     WaveView waveA, waveB;
-    ValueBox unison, width, bWave, bSemi, bFine, bLevel, sub, breath;
+    ValueBox unison, width, scan, grainSize, grainSpray, bWave, bSemi, bFine, bLevel, sub, breath;
     ChoiceSegments voiceMode;
+    int shownMode = -1;
+    std::unique_ptr<juce::FileChooser> chooser;
 };
 
 // A SynthCard that the OBSDN pages fill in from outside.
@@ -202,12 +217,19 @@ private:
     juce::String hintShown;
 };
 
-class LeadEditor : public SparkEditorBase
+class LeadEditor : public SparkEditorBase,
+                   public juce::FileDragAndDropTarget
 {
 public:
     explicit LeadEditor (LeadProcessor&);
     ~LeadEditor() override;
     void showPage (int page);   // 0 LEAD, 1 SYNTH, 2 RIFF, 3 FX
+
+    // drop a sound anywhere on OBSDN: it becomes oscillator A
+    bool isInterestedInFileDrag (const juce::StringArray& files) override;
+    void fileDragEnter (const juce::StringArray&, int, int) override { osc.setDragHover (true); }
+    void fileDragExit (const juce::StringArray&) override { osc.setDragHover (false); }
+    void filesDropped (const juce::StringArray& files, int x, int y) override;
 
 private:
     void hideOtherOverlays() override;

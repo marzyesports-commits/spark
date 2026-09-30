@@ -1,4 +1,5 @@
 #include "LeadEditor.h"
+#include "Instrument/FactorySounds.h"
 
 namespace spark
 {
@@ -66,67 +67,142 @@ void ChoiceBox::mouseWheelMove (const juce::MouseEvent&, const juce::MouseWheelD
 }
 
 // =====================================================================================
-WaveView::WaveView (LeadProcessor& p, juce::RangedAudioParameter& w, std::function<juce::String()> c)
-    : processor (p), wave (w), caption (std::move (c))
+WaveView::WaveView (LeadProcessor& p, juce::RangedAudioParameter& w, std::function<juce::String()> c, bool follows)
+    : processor (p), wave (w), caption (std::move (c)), followsSource (follows)
 {
     setInterceptsMouseClicks (false, false);
     startTimerHz (15);
 }
 
+juce::String WaveView::signature() const
+{
+    juce::String sig = juce::String (wave.getValue(), 4) + caption();
+    if (followsSource)
+    {
+        sig << "|" << (int) processor.getOscMode() << "|" << juce::String::toHexString ((juce::pointer_sized_int) processor.getSource().get())
+            << "|" << juce::String (processor.params.grainSize->load(), 3) << (dragHover ? "d" : "");
+    }
+    return sig;
+}
+
 void WaveView::timerCallback()
 {
-    const float v = wave.getValue();
-    const auto c = caption();
-    if (std::abs (v - shownWave) > 1.0e-4f || c != shownCaption)
+    if (signature() != shown)
         repaint();
 }
 
 void WaveView::paint (juce::Graphics& g)
 {
     using namespace colours;
-    shownWave = wave.getValue();
-    shownCaption = caption();
+    shown = signature();
+    const float v = wave.getValue();
     auto b = getLocalBounds().toFloat();
-    g.setColour (bg);
+    g.setColour (dragHover ? selected : bg);
     g.fillRoundedRectangle (b, 10.0f);
-    g.setColour (line);
-    g.drawRoundedRectangle (b.reduced (0.5f), 10.0f, 1.0f);
+    g.setColour (dragHover ? gold : line);
+    g.drawRoundedRectangle (b.reduced (0.5f), 10.0f, dragHover ? 1.5f : 1.0f);
 
     auto plot = b.reduced (12.0f, 10.0f).withTrimmedTop (14.0f);
     g.setColour (faint);
     g.drawHorizontalLine ((int) plot.getCentreY(), plot.getX(), plot.getRight());
 
-    const auto& table = LeadProcessor::waveTable();
-    std::vector<float> shape;
-    table.getFrameShape (shownWave * (float) (table.getNumFrames() - 1), shape, 128);
-    float peak = 1.0e-6f;
-    for (auto v : shape) peak = juce::jmax (peak, std::abs (v));
-    juce::Path p;
-    for (int i = 0; i < (int) shape.size(); ++i)
+    const int mode = followsSource ? (int) processor.getOscMode() : LeadProcessor::waves;
+    const auto src = followsSource ? processor.getSource() : nullptr;
+    auto drawShape = [&] (const std::vector<float>& shape)
     {
-        const float x = plot.getX() + plot.getWidth() * (float) i / (float) (shape.size() - 1);
-        const float y = plot.getCentreY() - shape[(size_t) i] / peak * plot.getHeight() * 0.45f;
-        if (i == 0) p.startNewSubPath (x, y); else p.lineTo (x, y);
+        float peak = 1.0e-6f;
+        for (auto s : shape) peak = juce::jmax (peak, std::abs (s));
+        juce::Path p;
+        for (int i = 0; i < (int) shape.size(); ++i)
+        {
+            const float x = plot.getX() + plot.getWidth() * (float) i / (float) (shape.size() - 1);
+            const float y = plot.getCentreY() - shape[(size_t) i] / peak * plot.getHeight() * 0.45f;
+            if (i == 0) p.startNewSubPath (x, y); else p.lineTo (x, y);
+        }
+        g.setColour (gold.withAlpha (0.18f));
+        g.strokePath (p, juce::PathStrokeType (5.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        g.setColour (gold);
+        g.strokePath (p, juce::PathStrokeType (1.6f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+    };
+
+    if (dragHover)
+    {
+        g.setColour (gold);
+        g.setFont (fonts::body (13.0f, true));
+        g.drawText ("Drop to play it as oscillator A", plot, juce::Justification::centred, false);
     }
-    g.setColour (gold.withAlpha (0.18f));
-    g.strokePath (p, juce::PathStrokeType (5.0f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-    g.setColour (gold);
-    g.strokePath (p, juce::PathStrokeType (1.6f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+    else if (mode != LeadProcessor::waves && src == nullptr)
+    {
+        g.setColour (muted);
+        g.setFont (fonts::body (12.0f));
+        g.drawFittedText ("Drop a sound here, or pick one from SOUNDS", plot.toNearestInt(), juce::Justification::centred, 2);
+    }
+    else if (mode == LeadProcessor::table && src != nullptr && src->table != nullptr)
+    {
+        std::vector<float> shape;
+        src->table->getFrameShape (v * (float) (src->table->getNumFrames() - 1), shape, 128);
+        drawShape (shape);
+    }
+    else if ((mode == LeadProcessor::grain || mode == LeadProcessor::sample) && src != nullptr && ! src->peaks.empty())
+    {
+        // the whole sound as a waveform, with the play position (and the grain's width)
+        const int bins = (int) src->peaks.size();
+        g.setColour (gold.withAlpha (0.55f));
+        for (int i = 0; i < bins; ++i)
+        {
+            const float x = plot.getX() + plot.getWidth() * (float) i / (float) bins;
+            const float h = juce::jmax (1.0f, src->peaks[(size_t) i] * plot.getHeight() * 0.9f);
+            g.fillRect (x, plot.getCentreY() - h * 0.5f, juce::jmax (1.0f, plot.getWidth() / (float) bins - 0.5f), h);
+        }
+        const float px = plot.getX() + plot.getWidth() * v;
+        if (mode == LeadProcessor::grain)
+        {
+            const float secs = fmt::grainSeconds (processor.params.grainSize->load());
+            const float w = juce::jmax (3.0f, plot.getWidth() * secs * (float) src->sampleRate / (float) juce::jmax (1, src->audio.getNumSamples()));
+            g.setColour (goldHi.withAlpha (0.25f));
+            g.fillRect (juce::Rectangle<float> (w, plot.getHeight()).withCentre ({ px, plot.getCentreY() }));
+        }
+        else
+        {
+            g.setColour (goldHi.withAlpha (0.12f));
+            g.fillRect (px, plot.getY(), plot.getRight() - px, plot.getHeight());
+        }
+        g.setColour (goldHi);
+        g.fillRect (px - 0.75f, plot.getY(), 1.5f, plot.getHeight());
+    }
+    else
+    {
+        const auto& table = LeadProcessor::waveTable();
+        std::vector<float> shape;
+        table.getFrameShape (v * (float) (table.getNumFrames() - 1), shape, 128);
+        drawShape (shape);
+    }
 
     g.setColour (text2);
     g.setFont (fonts::mono (10.0f));
-    g.drawText (shownCaption, b.reduced (12.0f, 6.0f).withHeight (14.0f), juce::Justification::centredLeft, true);
+    g.drawText (caption(), b.reduced (12.0f, 6.0f).withHeight (14.0f), juce::Justification::centredLeft, true);
 }
 
 // =====================================================================================
 OscPanel::OscPanel (LeadProcessor& p)
     : processor (p),
+      oscMode (param (p, "oscAMode"), { "WAVES", "TABLE", "GRAIN", "SAMPLE" },
+               { "The built-in shapes: sine to reed",
+                 "A wavetable from your sound (or a wavetable file). Wave moves through its frames",
+                 "Grains of your sound, pitched to the key. Wave sets where in the sound they come from",
+                 "Your sound itself, pitched to the key and looping from the Wave position" }),
       waveA (p, p.facetParam (LeadProcessor::wave), [&p]
       {
           const int n = juce::roundToInt (p.params.unison->load());
-          return "A  " + LeadProcessor::describeWave (p.facetParam (LeadProcessor::wave).getValue()).toUpperCase()
-                 + (n > 1 ? juce::String::fromUTF8 ("  \xc3\x97") + juce::String (n) : juce::String());
-      }),
+          const auto mult = n > 1 ? juce::String::fromUTF8 ("  \xc3\x97") + juce::String (n) : juce::String();
+          const int mode = p.getOscMode();
+          if (mode != LeadProcessor::waves)
+          {
+              const auto name = p.sourceName();
+              return "A  " + (name.isNotEmpty() ? name.upToLastOccurrenceOf (".", false, false).toUpperCase() : juce::String ("NO SOUND")) + mult;
+          }
+          return "A  " + LeadProcessor::describeWave (p.facetParam (LeadProcessor::wave).getValue()).toUpperCase() + mult;
+      }, true),
       waveB (p, param (p, "oscBWave"), [&p]
       {
           if (p.params.oscBLevel->load() < 0.005f) return juce::String ("B  OFF");
@@ -134,6 +210,9 @@ OscPanel::OscPanel (LeadProcessor& p)
       }),
       unison (param (p, "unison"), "UNISON", "How many copies of oscillator A are stacked (Detune spreads them)"),
       width (param (p, "width"), "WIDTH", "How far the unison copies spread across the stereo field"),
+      scan (param (p, "scanTime"), "SCAN", "Sweeps through the table on every note, from Wave to the last frame, over this time"),
+      grainSize (param (p, "grainSize"), "SIZE", "Grain length: short is buzzy and vocal, long is smooth"),
+      grainSpray (param (p, "grainSpray"), "SPRAY", "Scatters where grains come from: more movement and air"),
       bWave (param (p, "oscBWave"), "WAVE", "Oscillator B's shape"),
       bSemi (param (p, "oscBSemi"), "PITCH", "Oscillator B's pitch in semitones (+12 = an octave up)"),
       bFine (param (p, "oscBFine"), "FINE", "Oscillator B's fine tune in cents"),
@@ -145,35 +224,121 @@ OscPanel::OscPanel (LeadProcessor& p)
                    "One note at a time; every note restarts and glides from the last",
                    "One note at a time; overlapping notes glide without a new attack (best for leads)" })
 {
-    for (auto* c : std::initializer_list<juce::Component*> { &waveA, &waveB, &unison, &width, &bWave, &bSemi, &bFine, &bLevel, &sub, &breath, &voiceMode })
+    for (auto* c : std::initializer_list<juce::Component*> { &sounds, &oscMode, &waveA, &waveB, &unison, &width, &scan, &grainSize, &grainSpray,
+                                                             &bWave, &bSemi, &bFine, &bLevel, &sub, &breath, &voiceMode })
         addAndMakeVisible (c);
-    for (auto* v : { &unison, &width, &bWave, &bSemi, &bFine, &bLevel, &sub, &breath })
+    for (auto* v : { &unison, &width, &scan, &grainSize, &grainSpray, &bWave, &bSemi, &bFine, &bLevel, &sub, &breath })
         v->framed = true;
+    sounds.setFontHeight (10.0f);
+    sounds.setTooltip ("Play a sound as oscillator A: Spark's library, your own file, or Shapeshift a synth note. Or drag a file onto OBSDN");
+    sounds.onClick = [this] { showSoundsMenu(); };
+    startTimerHz (8);
+}
+
+void OscPanel::timerCallback()
+{
+    const int m = processor.getOscMode();
+    if (m != shownMode)
+    {
+        shownMode = m;
+        layoutModeRow();
+    }
+}
+
+void OscPanel::layoutModeRow()
+{
+    // the row under oscillator A: unison and width, plus Scan for tables, or grain size and spray
+    const int x = 16, w = getWidth() - 32, y = 152, h = 38;
+    const int m = processor.getOscMode();
+    scan.setVisible (m == LeadProcessor::table);
+    grainSize.setVisible (m == LeadProcessor::grain);
+    grainSpray.setVisible (m == LeadProcessor::grain);
+    width.setVisible (m != LeadProcessor::grain);
+    juce::Array<juce::Component*> row { &unison };
+    if (m == LeadProcessor::grain) { row.add (&grainSize); row.add (&grainSpray); }
+    else { row.add (&width); if (m == LeadProcessor::table) row.add (&scan); }
+    const int gap = 6, each = (w - gap * (row.size() - 1)) / row.size();
+    for (int i = 0; i < row.size(); ++i)
+        row[i]->setBounds (x + i * (each + gap), y, i == row.size() - 1 ? w - i * (each + gap) : each, h);
 }
 
 void OscPanel::resized()
 {
     const int x = 16, w = getWidth() - 32;
-    waveA.setBounds (x, 40, w, 84);
-    unison.setBounds (x, 130, w / 2 - 4, 40);
-    width.setBounds (x + w / 2 + 4, 130, w - w / 2 - 4, 40);
-    waveB.setBounds (x, 188, w, 60);
+    sounds.setBounds (getWidth() - 16 - 96, 8, 96, 26);
+    oscMode.setBounds (x, 40, w, 28);
+    waveA.setBounds (x, 72, w, 76);
+    layoutModeRow();
+    waveB.setBounds (x, 200, w, 50);
     const int q = (w - 18) / 4;
-    bWave.setBounds (x, 254, q, 40);
-    bSemi.setBounds (x + (q + 6), 254, q, 40);
-    bFine.setBounds (x + 2 * (q + 6), 254, q, 40);
-    bLevel.setBounds (x + 3 * (q + 6), 254, w - 3 * (q + 6), 40);
-    sub.setBounds (x, 326, w / 2 - 4, 40);
-    breath.setBounds (x + w / 2 + 4, 326, w - w / 2 - 4, 40);
-    voiceMode.setBounds (x, 392, w, 32);
+    bWave.setBounds (x, 256, q, 38);
+    bSemi.setBounds (x + (q + 6), 256, q, 38);
+    bFine.setBounds (x + 2 * (q + 6), 256, q, 38);
+    bLevel.setBounds (x + 3 * (q + 6), 256, w - 3 * (q + 6), 38);
+    sub.setBounds (x, 322, w / 2 - 4, 38);
+    breath.setBounds (x + w / 2 + 4, 322, w - w / 2 - 4, 38);
+    voiceMode.setBounds (x, 390, w, 32);
 }
 
 void OscPanel::paint (juce::Graphics& g)
 {
     drawPanel (g, getLocalBounds().toFloat());
-    drawSectionLabel (g, "OSCILLATORS", { 16.0f, 10.0f, 200.0f, 24.0f });
-    drawSectionLabel (g, "LAYERS", { 16.0f, 300.0f, 200.0f, 22.0f }, juce::Justification::centredLeft, colours::muted);
-    drawSectionLabel (g, "PLAY", { 16.0f, 368.0f, 200.0f, 22.0f }, juce::Justification::centredLeft, colours::muted);
+    drawSectionLabel (g, "OSCILLATORS", { 16.0f, 10.0f, 160.0f, 24.0f });
+    drawSectionLabel (g, "LAYERS", { 16.0f, 298.0f, 200.0f, 22.0f }, juce::Justification::centredLeft, colours::muted);
+    drawSectionLabel (g, "PLAY", { 16.0f, 364.0f, 200.0f, 22.0f }, juce::Justification::centredLeft, colours::muted);
+}
+
+void OscPanel::showSoundsMenu()
+{
+    juce::PopupMenu m;
+    m.setLookAndFeel (&getLookAndFeel());
+    m.addItem ("Import a sound...", [this] { importSound(); });
+    m.addItem ("Shapeshift a synth note...", [this] { startShapeshift(); });
+    m.addSeparator();
+    m.addSectionHeader ("SOUND LIBRARY");
+    const auto current = processor.getSource();
+    for (const auto& cat : factory::categories())
+    {
+        juce::PopupMenu sub;
+        for (const auto& s : factory::sounds())
+            if (s.category == cat)
+            {
+                const auto id = s.id;
+                sub.addItem (s.name, true, current != nullptr && current->factoryId == id,
+                             [this, id] { processor.loadFactorySound (id); });
+            }
+        m.addSubMenu (cat, sub);
+    }
+    m.addSeparator();
+    m.addItem ("Built-in waves", true, processor.getOscMode() == LeadProcessor::waves, [this] { processor.clearSource(); });
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&sounds));
+}
+
+void OscPanel::importSound()
+{
+    chooser = std::make_unique<juce::FileChooser> ("Choose a sound for oscillator A", juce::File::getSpecialLocation (juce::File::userMusicDirectory),
+                                                   processor.getSupportedExtensions());
+    chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles, [this] (const juce::FileChooser& fc)
+    {
+        const auto f = fc.getResult();
+        if (f == juce::File()) return;
+        juce::String error;
+        if (! processor.loadFile (f, error) && onMessage) onMessage ("Couldn't load that sound", error);
+    });
+}
+
+void OscPanel::startShapeshift()
+{
+    chooser = std::make_unique<juce::FileChooser> ("Shapeshift: choose one note bounced from Serum, Serum 2, Vital or any synth",
+                                                   juce::File::getSpecialLocation (juce::File::userMusicDirectory), processor.getSupportedExtensions());
+    chooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles, [this] (const juce::FileChooser& fc)
+    {
+        const auto f = fc.getResult();
+        if (f == juce::File()) return;
+        juce::String summary;
+        const bool ok = processor.shapeshift (f, summary);
+        if (onMessage) onMessage (ok ? "Shapeshifted" : "Couldn't shapeshift that", summary);
+    });
 }
 
 // =====================================================================================
@@ -782,10 +947,30 @@ LeadEditor::LeadEditor (LeadProcessor& p)
         page->setBounds (24, 86, 1072, 440);
     }
     getHeader().onPage = [this] (int page) { showPage (page); };
+    osc.onMessage = [this] (const juce::String& title, const juce::String& text) { showMessage (title, text); };
     showPage (0);
 }
 
 LeadEditor::~LeadEditor() = default;
+
+bool LeadEditor::isInterestedInFileDrag (const juce::StringArray& files)
+{
+    const auto exts = juce::StringArray::fromTokens (processor.getSupportedExtensions().removeCharacters ("*"), ";", "");
+    for (const auto& f : files)
+        for (const auto& e : exts)
+            if (e.isNotEmpty() && f.endsWithIgnoreCase (e)) return true;
+    return false;
+}
+
+void LeadEditor::filesDropped (const juce::StringArray& files, int, int)
+{
+    osc.setDragHover (false);
+    juce::String error;
+    if (! processor.loadFile (juce::File (files[0]), error))
+        showMessage ("Couldn't load that sound", error);
+    else
+        showPage (0);
+}
 
 void LeadEditor::hideOtherOverlays() {}
 

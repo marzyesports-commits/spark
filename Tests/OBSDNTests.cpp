@@ -517,6 +517,95 @@ int main (int argc, char** argv)
         check (peakOf (out) > 0.05f && allFinite (out), "holding one key plays the riff through Jade Supersaw");
     }
 
+    // ------------------------------------------------------------------ sound design
+    std::cout << "OBSDN: sound design" << std::endl;
+    {
+        LeadProcessor p;
+        p.prepareToPlay (sr, 256);
+        auto phrase = [&]
+        {
+            p.prepareToPlay (sr, 256);
+            return render (p, sr, { { 0.0, juce::MidiMessage::noteOn (1, 69, 0.85f) }, { 0.9, juce::MidiMessage::noteOff (1, 69) } }, 1.3);
+        };
+        setReal (p, "unison", 3.0f);
+        const float wavesDb = momentaryMaxDb (phrase(), sr);
+        struct Case { const char* id; LeadProcessor::OscMode mode; const char* what; };
+        const Case cases[] { { "wt_formant", LeadProcessor::table, "a library wavetable (TABLE)" },
+                             { "vox_ah", LeadProcessor::grain, "a sung vowel as grains (GRAIN)" },
+                             { "key_kalimba", LeadProcessor::sample, "a kalimba played as itself (SAMPLE)" },
+                             { "pad_choir", LeadProcessor::table, "a choir cut into a wavetable (TABLE)" } };
+        for (const auto& c : cases)
+        {
+            const bool loaded = p.loadFactorySound (c.id);
+            p.setOscMode (c.mode);
+            auto out = phrase();
+            const float db = momentaryMaxDb (out, sr);
+            check (loaded && allFinite (out) && peakOf (out) > 0.02f && std::abs (db - wavesDb) < 7.0f,
+                   juce::String ("oscillator A plays ") + c.what + " (" + juce::String (db - wavesDb, 1) + " dB from the built-in waves)");
+            if (argc > 2 && juce::String (argv[2]) == "wavs") writeWav (outDir.getChildFile (juce::String ("mode-") + c.id + ".wav"), out, sr);
+        }
+
+        // drop your own file: a pitched sound lands in GRAIN and plays in tune
+        juce::AudioBuffer<float> tone (1, (int) (sr * 1.5));
+        for (int i = 0; i < tone.getNumSamples(); ++i)
+            tone.setSample (0, i, 0.5f * std::sin (juce::MathConstants<float>::twoPi * 330.0f * (float) i / (float) sr)
+                                   + 0.2f * std::sin (juce::MathConstants<float>::twoPi * 660.0f * (float) i / (float) sr));
+        const auto wav = outDir.getChildFile ("dropped-E4.wav");
+        writeWav (wav, tone, sr);
+        juce::String error;
+        const bool ok = p.loadFile (wav, error);
+        auto src = p.getSource();
+        check (ok && p.getOscMode() == LeadProcessor::grain && src != nullptr && std::abs (src->rootNote - 64.0f) < 0.3f,
+               "a dropped file becomes oscillator A in GRAIN, with its pitch found (E4)");
+
+        // Shapeshift a bounced synth note
+        juce::AudioBuffer<float> saw (2, (int) (sr * 1.2));
+        double ph = 0.0;
+        for (int i = 0; i < saw.getNumSamples(); ++i)
+        {
+            float v = 0.0f;
+            for (int h = 1; h < 40; ++h) v += std::sin ((float) (ph * h)) / (float) h;
+            const float env = juce::jmin (1.0f, (float) i / 400.0f) * std::exp (-(float) i / (float) (sr * 1.5));
+            saw.setSample (0, i, v * 0.3f * env);
+            saw.setSample (1, i, v * 0.3f * env);
+            ph += juce::MathConstants<double>::twoPi * 110.0 / sr;
+        }
+        const auto bounced = outDir.getChildFile ("bounced-A2.wav");
+        writeWav (bounced, saw, sr);
+        juce::String summary;
+        const bool shifted = p.shapeshift (bounced, summary);
+        check (shifted && p.getOscMode() == LeadProcessor::table && p.getSource()->shapeshifted,
+               "Shapeshift rebuilds a bounced synth note as a playable table: " + summary.upToFirstOccurrenceOf ("\n", false, false));
+        auto out = phrase();
+        check (allFinite (out) && peakOf (out) > 0.02f, "the Shapeshifted table plays");
+
+        // projects keep their sound: a library sound by name, your own sound inside the project
+        p.loadFactorySound ("vox_ah");
+        juce::MemoryBlock st;
+        p.getStateInformation (st);
+        LeadProcessor q;
+        q.setStateInformation (st.getData(), (int) st.getSize());
+        pump (300);
+        check (q.getSource() != nullptr && q.getSource()->factoryId == "vox_ah" && q.getOscMode() == LeadProcessor::grain,
+               "a project reopens with its library sound and mode");
+        p.loadFile (wav, error);
+        p.getStateInformation (st);
+        LeadProcessor r2;
+        r2.setStateInformation (st.getData(), (int) st.getSize());
+        pump (300);
+        check (r2.getSource() != nullptr && r2.getSource()->name == "dropped-E4.wav" && r2.getSource()->audio.getNumSamples() == tone.getNumSamples(),
+               "a project reopens with your own dropped sound inside it");
+
+        // a Sound Design preset brings its sound
+        for (int i = 0; i < p.getNumFactoryPresets(); ++i)
+            if (p.getPreset (i).name == "Vox Lead") p.loadPreset (i);
+        check (p.getSource() != nullptr && p.getSource()->factoryId == "vox_ah" && p.getOscMode() == LeadProcessor::grain,
+               "the Vox Lead preset brings its vowel and plays it as grains");
+        for (int i = 0; i < p.getNumFactoryPresets(); ++i)
+            if (p.getPreset (i).name == "Jade Supersaw") p.loadPreset (i);
+        check (p.getOscMode() == LeadProcessor::waves, "a Waves preset goes back to the built-in shapes");
+    }
+
     // ------------------------------------------------------------------ UI
     std::cout << "OBSDN: pages" << std::endl;
     {
@@ -531,6 +620,17 @@ int main (int argc, char** argv)
             snapshot (ed.get(), outDir.getChildFile (juce::String ("page-") + names[page] + ".png"));
         }
         check (true, "every page draws");
+        // oscillator A in each sound mode
+        const std::pair<const char*, LeadProcessor::OscMode> modes[] { { "wt_formant", LeadProcessor::table }, { "vox_ah", LeadProcessor::grain },
+                                                                       { "key_kalimba", LeadProcessor::sample } };
+        le->showPage (0);
+        for (auto [id, m] : modes)
+        {
+            p.loadFactorySound (id);
+            p.setOscMode (m);
+            snapshot (ed.get(), outDir.getChildFile (juce::String ("osc-") + id + ".png"));
+        }
+        p.clearSource();
 
         // strike the stone and catch the lightning mid-flight
         le->showPage (0);

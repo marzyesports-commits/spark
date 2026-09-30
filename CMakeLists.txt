@@ -54,15 +54,16 @@ set(SPARK_SHARED_SOURCES
     Source/Common/UndoHistory.cpp
     Source/Common/Cards.cpp
     Source/Instrument/FxRack.cpp
-    Source/Instrument/FxHost.cpp)
+    Source/Instrument/FxHost.cpp
+    Source/Instrument/SourceData.cpp
+    Source/Instrument/FactorySounds.cpp
+    Source/Instrument/Shapeshift.cpp)
 
 # Spark (the sound-design instrument)
 set(SPARK_COMMON_SOURCES
     ${SPARK_SHARED_SOURCES}
     Source/Instrument/InstrumentPresets.cpp
-    Source/Instrument/Modulation.cpp
-    Source/Instrument/FactorySounds.cpp
-    Source/Instrument/Shapeshift.cpp)
+    Source/Instrument/Modulation.cpp)
 
 # OBSDN (the lead synth with its riff writer)
 set(OBSDN_SOURCES
@@ -124,7 +125,7 @@ spark_configure(Spark)
 target_link_libraries(Spark PRIVATE SparkSounds)
 
 # ---------- OBSDN (lead synth + riff writer, jade theme) ----------
-set(OBSDN_VERSION 0.2.0)
+set(OBSDN_VERSION 0.3.0)
 juce_add_plugin(OBSDN
     VERSION ${OBSDN_VERSION}
     COMPANY_NAME "Spark Audio"
@@ -146,6 +147,7 @@ juce_add_plugin(OBSDN
     MICROPHONE_PERMISSION_ENABLED FALSE)
 target_sources(OBSDN PRIVATE ${OBSDN_SOURCES})
 spark_configure(OBSDN)
+target_link_libraries(OBSDN PRIVATE SparkSounds)
 target_compile_definitions(OBSDN PRIVATE SPARK_THEME_OBSDN=1)
 
 # ---------- Offline tests (not shipped) ----------
@@ -172,7 +174,7 @@ if(SPARK_BUILD_TESTS)
     target_include_directories(OBSDNTests PRIVATE Source)
     target_compile_definitions(OBSDNTests PRIVATE
         JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 SPARK_TESTS=1 JUCE_MODAL_LOOPS_PERMITTED=1 SPARK_THEME_OBSDN=1)
-    target_link_libraries(OBSDNTests PRIVATE SparkAssets
+    target_link_libraries(OBSDNTests PRIVATE SparkAssets SparkSounds
         juce::juce_audio_utils juce::juce_audio_formats juce::juce_dsp
         juce::juce_recommended_config_flags)
 endif()
