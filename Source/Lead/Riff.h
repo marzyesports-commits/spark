@@ -21,7 +21,9 @@ struct Note
     bool slide = false;     // tie into the next note: it glides there in Mono/Legato
 };
 
-enum Style { pop = 0, trance, future, drill, afro, chip, anthem, numStyles };
+enum Style { pop = 0, trance, future, drill, afro, chip, anthem,
+             liquid, dancefloor, neuro, jumpUp, dubstep, garage,   // drum & bass and bass music (added in 0.6; appended so saved projects keep their style)
+             numStyles };
 enum Follow { inKey = 0, chromatic, fixedRoot };
 
 const juce::StringArray& styleNames();

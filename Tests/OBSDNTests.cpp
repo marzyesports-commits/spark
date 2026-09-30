@@ -200,7 +200,16 @@ int main (int argc, char** argv)
             run (20, false); shoot ("04c-riff-pentatonic");
             p.riffFoldToScale = true;   // FOLD: only the scale's notes
             run (20, false); shoot ("04d-riff-folded");
+            // a drum & bass style: Neuro DnB in F minor, folded, with its preset
+            for (int i = 0; i < p.getNumFactoryPresets(); ++i) if (p.getPreset (i).name == "Neuro Stab") p.loadPreset (i);
+            setReal (p, "riffKey", 5.0f); setReal (p, "riffScale", 1.0f);
+            setReal (p, "riffStyle", (float) riff::neuro); setReal (p, "riffBars", 1.0f);
+            pump (300);
+            p.setRiff (riff::generate (p.riffSettings(), 4));
+            run (20, false); shoot ("04e-riff-neuro-dnb");
             p.riffFoldToScale = false;
+            for (int i = 0; i < p.getNumFactoryPresets(); ++i) if (p.getPreset (i).name == "Jade Supersaw") p.loadPreset (i);
+            setReal (p, "riffStyle", (float) riff::pop); setReal (p, "riffBars", 0.0f);
             setReal (p, "riffKey", 9.0f); setReal (p, "riffScale", 1.0f);
         }
         le->showPage (LeadEditor::fxPage_);
@@ -304,6 +313,111 @@ int main (int argc, char** argv)
             auto out = render (p, sr, ev, 8 * bar + 2.0, &host);
             writeWav (outDir.getChildFile ("demo-" + juce::String (index++) + ".wav"), out, sr);
             std::cout << sec.preset << ": " << p.getRiff().notes.size() << " notes" << std::endl;
+        }
+        return 0;
+    }
+
+    // Demo: the drum & bass and bass-music styles at their own tempos, in F minor (Fm Db Ab Eb),
+    // over a simple beat built from Spark's drum sounds and a sine sub. argv[3] = Resources/Sounds.
+    if (argc > 3 && juce::String (argv[2]) == "bassdemo")
+    {
+        const juce::File sounds (argv[3]);
+        auto load = [&] (const juce::String& id)
+        {
+            juce::FlacAudioFormat flac;
+            std::unique_ptr<juce::AudioFormatReader> r (flac.createReaderFor (sounds.getChildFile (id + ".flac").createInputStream().release(), true));
+            juce::AudioBuffer<float> b (2, r != nullptr ? (int) r->lengthInSamples : 1);
+            b.clear();
+            if (r != nullptr) r->read (&b, 0, b.getNumSamples(), 0, true, true);
+            return b;
+        };
+        const auto kick = load ("drm_kick"), snare = load ("drm_snare"), hat = load ("drm_hat_closed"), clap = load ("drm_clap");
+        // beat: per 16th step, which hits play. k kick, s snare, h hat, c clap
+        struct Section { const char* name; const char* preset; int style; juce::uint32 seed; float density; double bpm; const char* beat; int bars; };
+        const Section sections[] {
+            { "liquid-dnb",     "Liquid Lead",      riff::liquid,     7,  0.50f, 174, "k.h.s.h.h.kh.s.h", 8 },
+            { "dancefloor-dnb", "Dancefloor Pluck", riff::dancefloor, 12, 0.50f, 174, "k.h.s.h.h.kh.s.h", 8 },
+            { "neuro-dnb",      "Neuro Stab",       riff::neuro,      4,  0.55f, 174, "k.h.s.h.h.kh.s.h", 8 },
+            { "jump-up",        "Jump Up Hoover",   riff::jumpUp,     9,  0.50f, 174, "k.h.s.h.h.kh.s.h", 8 },
+            { "dubstep",        "Dubstep Growl",    riff::dubstep,    3,  0.55f, 140, "k.h.h.h.s.h.h.hh", 8 },
+            { "uk-garage",      "Garage Organ",     riff::garage,     5,  0.50f, 132, "k.hcs.h.hk.hcs.h", 8 } };
+        const int roots[] { 53, 49, 56, 51 };   // F3 Db3 Ab3 Eb3: Fm Db Ab Eb
+        for (const auto& sec : sections)
+        {
+            LeadProcessor p;
+            for (int i = 0; i < p.getNumFactoryPresets(); ++i)
+                if (p.getPreset (i).name == sec.preset) p.loadPreset (i);
+            setReal (p, "riffOn", 1.0f);
+            setReal (p, "riffKey", 5.0f);   // F
+            setReal (p, "riffScale", 1.0f); // minor
+            setReal (p, "riffStyle", (float) sec.style);
+            setReal (p, "riffBars", 1.0f);  // 2 bars
+            setReal (p, "riffDensity", sec.density);
+            pump (300);
+            p.setRiff (riff::generate (p.riffSettings(), sec.seed));
+            HostPlayHead host;
+            host.bpm = sec.bpm;
+            host.playing = true;
+            p.setPlayHead (&host);
+            p.prepareToPlay (sr, 256);
+            const double bar = 240.0 / sec.bpm, step = bar / 16.0;
+            std::vector<Ev> ev;
+            for (int b = 0; b < sec.bars; ++b)
+            {
+                const int k = roots[(b / 2) % 4];   // two bars per chord
+                if (b % 2 == 0)
+                {
+                    ev.push_back ({ juce::jmax (0.0, b * bar - 0.02), juce::MidiMessage::noteOn (1, k, 0.9f) });
+                    ev.push_back ({ (b + 2) * bar + (b + 2 >= sec.bars ? -0.03 : 0.02), juce::MidiMessage::noteOff (1, k) });
+                }
+            }
+            const double total = sec.bars * bar + 1.5;
+            auto lead = render (p, sr, ev, total, &host);
+            // beat and sub
+            juce::AudioBuffer<float> mix (2, lead.getNumSamples());
+            mix.clear();
+            auto hit = [&] (const juce::AudioBuffer<float>& s, double t, float g)
+            {
+                const int at = (int) (t * sr);
+                for (int c = 0; c < 2; ++c)
+                    for (int i = 0; i < s.getNumSamples() && at + i < mix.getNumSamples(); ++i)
+                        mix.addSample (c, at + i, s.getSample (c, i) * g);
+            };
+            const juce::String beat (sec.beat);
+            for (int b = 0; b < sec.bars; ++b)
+                for (int s = 0; s < 16; ++s)
+                {
+                    const double t = b * bar + s * step + (sec.style == riff::garage && s % 2 == 1 ? step * 0.25 : 0.0);   // garage shuffle
+                    const auto ch = beat[s];
+                    if (ch == 'k') hit (kick, t, 0.9f);
+                    if (ch == 's') hit (snare, t, 0.75f);
+                    if (ch == 'c') { hit (clap, t, 0.55f); }
+                    if (ch == 'h' || (ch == '.' && sec.style == riff::neuro && s % 2 == 1)) hit (hat, t, 0.28f);
+                }
+            double phase = 0.0;
+            for (int i = 0; i < (int) (sec.bars * bar * sr); ++i)
+            {
+                const double t = i / sr;
+                const int b = (int) (t / bar);
+                const double hz = 440.0 * std::pow (2.0, (roots[(b / 2) % 4] - 24 - 69) / 12.0);
+                phase += hz / sr;
+                const double inBar = std::fmod (t, bar * 2) / (bar * 2);
+                const float env = (float) (juce::jmin (1.0, inBar * 200.0) * juce::jmin (1.0, (1.0 - inBar) * 200.0));
+                const float v = 0.32f * env * (float) std::sin (juce::MathConstants<double>::twoPi * phase);
+                mix.addSample (0, i, v); mix.addSample (1, i, v);
+            }
+            for (int c = 0; c < 2; ++c)
+            {
+                mix.addFrom (c, 0, lead, c, 0, lead.getNumSamples(), 0.9f);
+                auto* d = mix.getWritePointer (c);
+                for (int i = 0; i < mix.getNumSamples(); ++i) d[i] = 0.9f * std::tanh (d[i]);
+            }
+            writeWav (outDir.getChildFile (juce::String ("bass-") + sec.name + ".wav"), mix, sr);
+            std::string grid (32, '.');
+            for (const auto& n : p.getRiff().notes)
+                if (n.start / 6 < 32) grid[(size_t) (n.start / 6)] = n.start % 6 != 0 ? '*' : (n.degree >= 7 ? '^' : (n.degree < 0 ? 'v' : (char) ('0' + n.degree)));
+            std::cout << sec.name << " (" << sec.preset << ", " << sec.bpm << " bpm): " << p.getRiff().notes.size() << " notes  |"
+                      << grid.substr (0, 16) << "|" << grid.substr (16) << "|" << std::endl;
         }
         return 0;
     }

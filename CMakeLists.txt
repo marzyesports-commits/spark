@@ -138,7 +138,7 @@ spark_configure(Spark)
 target_link_libraries(Spark PRIVATE SparkSounds)
 
 # ---------- OBSDN (lead synth + riff writer, jade theme) ----------
-set(OBSDN_VERSION 0.5.0)
+set(OBSDN_VERSION 0.6.0)
 juce_add_plugin(OBSDN
     VERSION ${OBSDN_VERSION}
     COMPANY_NAME "Spark Audio"

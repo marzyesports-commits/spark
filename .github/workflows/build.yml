@@ -12,7 +12,7 @@ permissions:
 
 env:
   VERSION: 1.5.0        # Spark. A "-dev" version builds and tests but doesn't publish; a version that's already released isn't re-published
-  OBSDN_VERSION: 0.5.0  # OBSDN (published as a pre-release while it's in beta)
+  OBSDN_VERSION: 0.6.0  # OBSDN (published as a pre-release while it's in beta)
 
 jobs:
   macos:
@@ -311,15 +311,19 @@ jobs:
           body: |
             **OBSDN** (beta): a lead synth that helps start your ideas. Pick a key, press Generate, and it gives you a riff to build on, then shape the sound around it. Strike the jade stone to roll new variations.
 
-            **New in 0.5**
+            **New in 0.6**
+            - **Drum & bass and bass music on the RIFF page.** Six new styles: Liquid DnB, Dancefloor DnB, Neuro DnB, Jump Up, Dubstep and UK Garage. Each writes with its own rhythm (two-step bounce, half-time hits, 32nd rolls, garage shuffle) and the hint under the roll suggests a tempo.
+            - **DnB & Bass presets.** Seven new leads to play them with: Reese Lead, Neuro Stab, Liquid Lead, Dancefloor Pluck, Jump Up Hoover, Dubstep Growl and Garage Organ.
+
+            **Also new since 0.4**
             - **Write in key.** The RIFF page has a key table: the 12 notes with your scale lit and its root solid. Click a note to change key. The piano roll only lets you write lit notes.
             - **FOLD.** One click hides every note outside the scale, so the roll shows only the notes you can use. Projects remember it.
             - **A simpler RIFF page.** Generate, Mutate, Rhythm and Answer up top, key and scale underneath, and the finer settings (length, density, range, gate, swing, octave, Follow, Latch) tucked under **MORE**.
             - **A smaller download.** OBSDN now ships a focused library of 23 lead sounds (leads, wavetables, vocals, keys) instead of all 82, so the installers are about half the size.
 
-            **RIFF**: seven styles (Pop, Trance, Future, Drill, Afro, Chip, Anthem). Hold a key to play the riff in time with your DAW; with Follow on, other keys move it along the scale so it follows your chords. Mutate keeps the rhythm and tries new notes, Rhythm keeps the notes, Answer makes the second half reply to the first. Drag **DRAG MIDI** onto a track to keep it.
+            **RIFF**: 13 styles (Pop, Trance, Future, Drill, Afro, Chip, Anthem, Liquid DnB, Dancefloor DnB, Neuro DnB, Jump Up, Dubstep, UK Garage). Hold a key to play the riff in time with your DAW; with Follow on, other keys move it along the scale so it follows your chords. Mutate keeps the rhythm and tries new notes, Rhythm keeps the notes, Answer makes the second half reply to the first. Drag **DRAG MIDI** onto a track to keep it.
 
-            **Sound**: up to 7-voice unison wavetable oscillators, a second oscillator, sub and breath, a filter with its own envelope, delayed vibrato, scoops, fall-offs and glide, a 7-effect rack, and 52 presets across Supersaw, Future, Drill & Trap, Afro & Amapiano, Retro 80s, Chip, Classic and Sound Design.
+            **Sound**: up to 7-voice unison wavetable oscillators, a second oscillator, sub and breath, a filter with its own envelope, delayed vibrato, scoops, fall-offs and glide, a 7-effect rack, and 59 presets across Supersaw, Future, Drill & Trap, DnB & Bass, Afro & Amapiano, Retro 80s, Chip, Classic and Sound Design.
 
             **Sound design**: oscillator A can play any sound. Drop in a file, pick one of the 23 library sounds, or Shapeshift a note bounced from Serum or Vital, then play it as a wavetable (TABLE), as grains (GRAIN) or as itself (SAMPLE).
 

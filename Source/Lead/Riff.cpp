@@ -6,7 +6,8 @@ namespace spark::riff
 // =====================================================================================
 const juce::StringArray& styleNames()
 {
-    static const juce::StringArray n { "Pop", "Trance", "Future", "Drill", "Afro", "Chip", "Anthem" };
+    static const juce::StringArray n { "Pop", "Trance", "Future", "Drill", "Afro", "Chip", "Anthem",
+                                       "Liquid DnB", "Dancefloor DnB", "Neuro DnB", "Jump Up", "Dubstep", "UK Garage" };
     return n;
 }
 
@@ -19,7 +20,13 @@ const juce::StringArray& styleHints()
         "Triplet rolls, slides and tight minor lines: drill and trap",
         "3-3-2 bounce and call-and-response: afrobeats and amapiano",
         "Fast arpeggios with big leaps: chiptune and video-game leads",
-        "Long notes and wide intervals: festival and sing-along hooks" };
+        "Long notes and wide intervals: festival and sing-along hooks",
+        "Flowing, soulful lines that move by step: liquid drum & bass (170-176 bpm)",
+        "Catchy repeated-note hooks with octave drops: dancefloor DnB (170-176 bpm)",
+        "Stabbing 16ths on the two-step, with rolls: neurofunk (170-176 bpm)",
+        "Bouncy call and response with drops and slides: jump up (170-176 bpm)",
+        "Half-time hits and 16th rolls: dubstep and riddim (140-150 bpm)",
+        "Shuffled 2-step skips and stabs: UK garage and bass house (130-135 bpm)" };
     return n;
 }
 
@@ -84,6 +91,12 @@ namespace
             case afro:   return { 0.20f, 0.45f, 0.25f, 0.08f, 0.02f, 0.06f };
             case chip:   return { 0.05f, 0.20f, 0.35f, 0.25f, 0.15f, 0.02f };
             case anthem: return { 0.15f, 0.35f, 0.20f, 0.25f, 0.05f, 0.10f };
+            case liquid: return { 0.12f, 0.55f, 0.20f, 0.10f, 0.03f, 0.14f };
+            case dancefloor: return { 0.32f, 0.28f, 0.14f, 0.08f, 0.18f, 0.16f };
+            case neuro:  return { 0.35f, 0.18f, 0.15f, 0.12f, 0.20f, 0.12f };
+            case jumpUp: return { 0.38f, 0.15f, 0.12f, 0.10f, 0.25f, 0.30f };
+            case dubstep:return { 0.40f, 0.15f, 0.12f, 0.13f, 0.20f, 0.35f };
+            case garage: return { 0.22f, 0.40f, 0.23f, 0.10f, 0.05f, 0.08f };
             default:     return { 0.18f, 0.50f, 0.20f, 0.10f, 0.02f, 0.08f };
         }
     }
@@ -98,7 +111,13 @@ namespace
             { 1, 0, .6f, .5f, .4f, .3f, .8f, 0, .5f, .4f, .6f, .5f },                             // drill (triplets)
             { 1, 0, 0, .85f, 0, 0, .85f, 0, .3f, 0, .7f, 0, .6f, 0, .4f, 0 },                   // afro
             { 1, .8f, .8f, .8f, 1, .8f, .8f, .8f, 1, .8f, .8f, .8f, 1, .8f, .8f, .8f },         // chip
-            { 1, 0, 0, 0, .6f, 0, .3f, 0, .9f, 0, 0, 0, .6f, 0, .4f, .1f } };                   // anthem
+            { 1, 0, 0, 0, .6f, 0, .3f, 0, .9f, 0, 0, 0, .6f, 0, .4f, .1f },                    // anthem
+            { 1, 0, .2f, .5f, .3f, 0, .6f, .2f, .45f, 0, .7f, .2f, .5f, .1f, .4f, .2f },        // liquid dnb
+            { 1, 0, 0, .55f, 0, 0, .85f, 0, .5f, 0, .85f, .3f, 0, .5f, .75f, .3f },            // dancefloor dnb: off-beat bounce with 16th pickups
+            { 1, 0, .5f, .7f, .2f, .3f, .7f, .2f, .3f, .4f, .9f, .6f, .2f, .3f, .8f, .5f },     // neuro: around the two-step kick (1, 3&) and snare (2, 4)
+            { 1, 0, 0, .6f, 0, 0, .9f, 0, .4f, 0, .9f, 0, .3f, .4f, .7f, 0 },                   // jump up
+            { 1, 0, 0, .5f, 0, 0, .7f, 0, .15f, 0, .6f, .5f, 0, .5f, .7f, .6f },               // dubstep: half-time, busy into the bar end
+            { 1, 0, 0, .7f, 0, .3f, .6f, 0, .4f, 0, .8f, 0, 0, .6f, .5f, 0 } };                 // uk garage: 2-step skips
         return g[(size_t) juce::jlimit (0, (int) g.size() - 1, style)];
     }
 
@@ -124,6 +143,19 @@ namespace
             {
                 rolled.push_back (t);
                 if (r.nextFloat() < 0.18f + density * 0.2f)
+                    rolled.push_back (t + stepTicks / 2);
+            }
+            out = rolled;
+        }
+        // Dubstep and neuro: some 16ths roll into 32nds
+        if (style == dubstep || style == neuro)
+        {
+            std::vector<int> rolled;
+            const float chance = (style == dubstep ? 0.14f : 0.08f) + density * 0.14f;
+            for (auto t : out)
+            {
+                rolled.push_back (t);
+                if (t % ticksPerBeat != 0 && r.nextFloat() < chance)
                     rolled.push_back (t + stepTicks / 2);
             }
             out = rolled;

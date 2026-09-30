@@ -159,6 +159,31 @@ PresetLibrary makeLeadPresets()
     set (lib, "Tunnel Saw", { { "velTone", .9f }, { "resonance", .35f } });
     set (lib, "Drill Slide", { { "subLevel", .15f } });
 
+    add (lib, "DnB & Bass", "Reeses, stabs and growls for drum & bass, dubstep and garage", {
+        { "Reese Lead",      "Wide detuned saws that roll and phase",            { SAW, .75f, .45f, .35f, .35f, .00f, .35f, .25f }, 5, .005f, .40f, .90f, .20f, L, -7.8f },
+        { "Neuro Stab",      "Driven sync stab that snaps on the beat",          { SYNC, .25f, .55f, .70f, .55f, .00f, .10f, .20f }, 3, .001f, .18f, .25f, .12f, M, -4.8f },
+        { "Liquid Lead",     "Soft, chorused lead for rolling liquid lines",     { TRI, .20f, .60f, .15f, .10f, .35f, .30f, .50f }, 3, .02f, .50f, .85f, .45f, L, -6.0f },
+        { "Dancefloor Pluck","Bright detuned pluck for catchy dancefloor hooks", { SAW, .50f, .70f, .55f, .25f, .00f, .15f, .30f }, 5, .002f, .30f, .45f, .20f, M, -7.0f },
+        { "Jump Up Hoover",  "Big detuned pulse that scoops and falls",          { PUL, .70f, .58f, .35f, .40f, .10f, .45f, .20f }, 7, .005f, .40f, .85f, .20f, M, -7.6f },
+        { "Dubstep Growl",   "A wavefolded table that growls as it scans",       { .55f, .25f, .55f, .55f, .60f, .00f, .25f, .20f }, 3, .002f, .35f, .80f, .15f, M, -6.4f },
+        { "Garage Organ",    "Short organ stab for 2-step and speed garage (Poly)", { SQR, .10f, .62f, .55f, .15f, .00f, .00f, .30f }, 2, .002f, .25f, .15f, .15f, P, -6.9f },
+    });
+    set (lib, "Reese Lead", { { "subLevel", .30f }, { "resonance", .20f }, { "oscBLevel", .30f }, { "oscBSemi", -12 }, { "oscBWave", SAW }, { "oscBFine", 12 } });
+    dist (lib, "Reese Lead", 0, .25f, .35f);
+    set (lib, "Neuro Stab", { { "resonance", .50f }, { "fltD", .15f }, { "fltS", .10f }, { "velTone", .7f } });
+    dist (lib, "Neuro Stab", 1, .50f, .60f);
+    chorus (lib, "Liquid Lead", .45f, .35f);
+    delay (lib, "Liquid Lead", 3, .40f, .22f);
+    set (lib, "Liquid Lead", { { "oscBLevel", .20f }, { "oscBSemi", 12 }, { "oscBWave", SIN }, { "vibDelay", .30f } });
+    set (lib, "Dancefloor Pluck", { { "oscBLevel", .30f }, { "oscBSemi", 12 }, { "oscBWave", SQR }, { "fltD", .25f }, { "fltS", .30f } });
+    delay (lib, "Dancefloor Pluck", 1, .35f, .18f);
+    set (lib, "Jump Up Hoover", { { "scoop", .40f }, { "fall", .30f }, { "subLevel", .20f } });
+    sound (lib, "Dubstep Growl", "wt_fold", 1);
+    set (lib, "Dubstep Growl", { { "scanTime", .60f }, { "resonance", .40f }, { "subLevel", .25f } });
+    dist (lib, "Dubstep Growl", 0, .50f, .50f);
+    set (lib, "Garage Organ", { { "oscBLevel", .35f }, { "oscBSemi", 12 }, { "oscBWave", SQR }, { "fltD", .20f }, { "fltS", .10f } });
+    delay (lib, "Garage Organ", 1, .30f, .15f);
+
     add (lib, "Afro & Amapiano", "Flutes, whistles and plucks with bounce", {
         { "Afro Flute",      "Breathy flute for afrobeats toplines",             { TRI, .10f, .62f, .15f, .10f, .30f, .15f, .35f }, 1, .03f, .40f, .85f, .20f, L, -9.0f },
         { "Piano Whistle",   "Clean whistle lead for amapiano",                  { SIN, .05f, .80f, .10f, .15f, .35f, .20f, .40f }, 1, .02f, .40f, .90f, .25f, L, -9.5f },
