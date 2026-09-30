@@ -1,4 +1,5 @@
 #include "LeadEditor.h"
+#include "Common/Licence.h"
 #include "Instrument/FactorySounds.h"
 
 namespace spark
@@ -822,10 +823,25 @@ void MidiDragTile::paint (juce::Graphics& g)
     g.drawText ("DRAG MIDI", b, juce::Justification::centred, false);
 }
 
+namespace
+{
+    // after the trial, until OBSDN is activated, DRAG MIDI opens the activation screen instead
+    bool midiLocked (LeadProcessor& p, juce::Component& from)
+    {
+        auto* l = p.getLicence();
+        if (l == nullptr || ! l->isRestricted())
+            return false;
+        if (auto* ed = from.findParentComponentOfClass<SparkEditorBase>())
+            ed->showLicence();
+        return true;
+    }
+}
+
 void MidiDragTile::mouseDrag (const juce::MouseEvent& e)
 {
     if (dragged || e.getDistanceFromDragStart() < 6)
         return;
+    if (midiLocked (processor, *this)) { dragged = true; return; }
     dragged = true;
     const auto file = processor.exportRiffMidi();
     if (file.existsAsFile())
@@ -837,6 +853,8 @@ void MidiDragTile::mouseUp (const juce::MouseEvent& e)
     const bool wasDrag = dragged;
     dragged = false;
     if (wasDrag || ! e.mouseWasClicked())
+        return;
+    if (midiLocked (processor, *this))
         return;
     chooser = std::make_unique<juce::FileChooser> ("Save the riff as a MIDI file",
                                                    juce::File::getSpecialLocation (juce::File::userMusicDirectory)

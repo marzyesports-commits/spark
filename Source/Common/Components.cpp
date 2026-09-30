@@ -1,4 +1,6 @@
 #include "Components.h"
+#include "LicenceView.h"
+#include "Licence.h"
 
 namespace spark
 {
@@ -1958,6 +1960,20 @@ SparkEditorBase::SparkEditorBase (SparkProcessorBase& p, const EditorStyle& edit
     browser.onClose = [this] { setBrowserVisible (false); };
     browser.onSave = [this] { promptToSavePreset(); };
 
+    if (auto* licence = p.getLicence(); licence != nullptr && licence->isEnabled())
+    {
+        licenceFooter = std::make_unique<LicenceFooter> (*licence);
+        licenceFooter->setBounds (28, 694, 760, 22);
+        licenceFooter->onActivate = [this] { showLicence(); };
+        contentComponent.addChildComponent (*licenceFooter);
+        licencePanel = std::make_unique<LicencePanel> (*licence);
+        licencePanel->setBounds (0, 0, designWidth, designHeight);
+        contentComponent.addChildComponent (*licencePanel);
+        licence->recheckIfDue();
+        if (licence->isRestricted())
+            juce::MessageManager::callAsync ([safe = juce::Component::SafePointer<SparkEditorBase> (this)] { if (safe != nullptr) safe->showLicence(); });
+    }
+
     setResizable (true, true);
     setResizeLimits (designWidth * 7 / 10, designHeight * 7 / 10, designWidth * 3 / 2, designHeight * 3 / 2);
     if (auto* c = getConstrainer())
@@ -1980,6 +1996,12 @@ bool SparkEditorBase::keyPressed (const juce::KeyPress& key)
         return true;
     }
     return false;
+}
+
+void SparkEditorBase::showLicence()
+{
+    if (licencePanel != nullptr)
+        licencePanel->open();
 }
 
 SparkEditorBase::~SparkEditorBase()
@@ -2007,6 +2029,8 @@ void SparkEditorBase::showSettingsMenu (juce::Component& anchor)
     addExtraMenuItems (m);
     if (m.getNumItems() > 0)
         m.addSeparator();
+    if (licencePanel != nullptr)
+        m.addItem ("Licence...", [this] { showLicence(); });
     m.addItem ("Browse presets...", [this] { setBrowserVisible (true); });
     m.addItem ("Save preset...", [this] { promptToSavePreset(); });
     juce::PopupMenu presets;

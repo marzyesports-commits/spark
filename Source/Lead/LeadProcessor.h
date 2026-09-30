@@ -12,6 +12,7 @@
 namespace spark
 {
 class LeadProcessor;
+struct ObsdnLicence;   // OBSDN's Gumroad licence (LeadProcessor.cpp)
 
 // Mono and Legato on top of JUCE's voice handling: a stack of held keys, one voice moving between them.
 class LeadSynth : public juce::Synthesiser
@@ -115,6 +116,8 @@ public:
     float getFacetModulation (int facet) const override;
     static int destForFacet (int facet);   // the mod destination behind a facet (-1: Glide can't be modulated)
     bool keepsValueOnPresetLoad (const juce::String& paramId) const override { return paramId.startsWith ("riff"); }
+    Licence* getLicence() override;              // nullptr in builds without a Gumroad product id (the free beta)
+    void setLicenceForTesting (Licence* l) { testLicence = l; }
 
     // ---- AudioProcessor
     const juce::String getName() const override { return "OBSDN"; }
@@ -148,6 +151,10 @@ private:
 
     LeadSynth synth;
     juce::SmoothedValue<float> levelSmooth;
+    const Licence* activeLicence() const noexcept;
+    std::unique_ptr<juce::SharedResourcePointer<ObsdnLicence>> sharedLicence;   // created on first use
+    Licence* testLicence = nullptr;
+    juce::int64 demoClock = 0;
     double currentSampleRate = 44100.0;
 
     // the riff: edited on the message thread, read by the audio thread through a spin lock

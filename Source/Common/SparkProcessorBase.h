@@ -60,12 +60,16 @@ namespace fmt
     float filterQ (float resonance);    // 0..1 -> Q 0.65..9.4 (0.1 = 0.85, the classic Spark filter)
 }
 
+class Licence;
+
 // Everything the two Spark plugins share: facet parameters, locks, the lineage
 // (Spark / Breed / Keep / recall), presets and state saving.
 class SparkProcessorBase : public juce::AudioProcessor,
                            public juce::ChangeBroadcaster
 {
 public:
+    // The plugin's licence, when it's sold with keys (nullptr: free, or licensing switched off in this build)
+    virtual Licence* getLicence() { return nullptr; }
     using Layout = juce::AudioProcessorValueTreeState::ParameterLayout;
 
     SparkProcessorBase (const BusesProperties&, std::vector<FacetSpec> facets,

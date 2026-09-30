@@ -1,4 +1,5 @@
 #include "LeadProcessor.h"
+#include "Common/Licence.h"
 #include "LeadVoice.h"
 #include "LeadEditor.h"
 #include "Instrument/FactorySounds.h"
@@ -6,6 +7,28 @@
 
 namespace spark
 {
+#ifndef OBSDN_GUMROAD_PRODUCT_ID
+ #define OBSDN_GUMROAD_PRODUCT_ID ""
+#endif
+#ifndef OBSDN_BUY_URL
+ #define OBSDN_BUY_URL ""
+#endif
+
+// One licence per process, shared by every OBSDN instance
+struct ObsdnLicence : public Licence
+{
+    ObsdnLicence() : Licence (config()) {}
+    static Config config()
+    {
+        Config c;
+        c.productName = "OBSDN";
+        c.productId = OBSDN_GUMROAD_PRODUCT_ID;
+        c.buyUrl = OBSDN_BUY_URL;
+        return c;
+    }
+};
+
+
 namespace leadfmt
 {
     float cutoffHz (float v)     { return 300.0f * std::pow (60.0f, juce::jlimit (0.0f, 1.0f, v)); }
@@ -260,6 +283,7 @@ LeadProcessor::LeadProcessor()
     setRiff (riff::generate (s, 2026));
     player.reset();
     startTimerHz (10);
+    getLicence();   // created here, before audio starts, so the audio thread only ever reads it
 }
 
 LeadProcessor::~LeadProcessor()
@@ -562,9 +586,20 @@ void LeadProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
     advanceLfos (n);
 
     levelSmooth.setTargetValue (juce::Decibels::decibelsToGain (params.level->load()));
+    // unlicensed after the trial: the sound drops out for 2 s in every 30 s
+    const auto* lic = activeLicence();
+    const bool demo = lic != nullptr && lic->isRestricted();
+    const double cycle = 30.0 * currentSampleRate, gap = 2.0 * currentSampleRate, fade = 0.02 * currentSampleRate;
     for (int i = 0; i < n; ++i)
     {
-        const float g = levelSmooth.getNextValue();
+        float g = levelSmooth.getNextValue();
+        if (demo)
+        {
+            // p < 0: playing (fading out over the last 20 ms); 0 <= p < gap: silent (fading back in at the end)
+            const double p = std::fmod ((double) demoClock++, cycle) - (cycle - gap);
+            const double k = p < 0.0 ? juce::jmin (1.0, -p / fade) : juce::jmax (0.0, (p - (gap - fade)) / fade);
+            g *= (float) k;
+        }
         for (int ch = 0; ch < numCh; ++ch)
         {
             auto& x = buffer.getWritePointer (ch)[i];
@@ -579,6 +614,21 @@ void LeadProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
 juce::AudioProcessorEditor* LeadProcessor::createEditor()
 {
     return new LeadEditor (*this);
+}
+
+// =====================================================================================
+Licence* LeadProcessor::getLicence()
+{
+    if (testLicence != nullptr) return testLicence;
+    if (juce::String (OBSDN_GUMROAD_PRODUCT_ID).isEmpty()) return nullptr;
+    if (sharedLicence == nullptr)
+        sharedLicence = std::make_unique<juce::SharedResourcePointer<ObsdnLicence>>();
+    return &sharedLicence->get();
+}
+
+const Licence* LeadProcessor::activeLicence() const noexcept
+{
+    return testLicence != nullptr ? testLicence : (sharedLicence != nullptr ? &sharedLicence->get() : nullptr);
 }
 
 // =====================================================================================

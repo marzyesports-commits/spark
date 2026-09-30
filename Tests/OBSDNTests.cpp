@@ -4,6 +4,7 @@
 #include "Lead/LeadProcessor.h"
 #include "Lead/LeadEditor.h"
 #include "Instrument/FactorySounds.h"
+#include "Common/Licence.h"
 
 using namespace spark;
 
@@ -251,6 +252,42 @@ int main (int argc, char** argv)
             juce::PNGImageFormat().writeImageToStream (img, os);
         }
         p.riffPreview = false;
+
+        // licensing, as it looks in a build with a Gumroad product id: the trial footer and the activation screen
+        {
+            const auto store = outDir.getChildFile ("licence-gallery.dat");
+            store.deleteFile();
+            juce::Time clockNow = juce::Time::getCurrentTime();
+            Licence::Config c;
+            c.productName = "OBSDN"; c.productId = "gallery"; c.buyUrl = "https://example.com/obsdn";
+            c.storage = store; c.clock = [&] { return clockNow; };
+            Licence lic (c);
+            clockNow = clockNow + juce::RelativeTime::days (2);
+            lic.update();
+            LeadProcessor q;
+            q.setLicenceForTesting (&lic);
+            q.setRateAndBufferSizeDetails (sr, 256);
+            q.prepareToPlay (sr, 256);
+            std::unique_ptr<juce::AudioProcessorEditor> ed2 (q.createEditor());
+            ed2->setSize (1120, 720);
+            auto shoot2 = [&] (const juce::String& name)
+            {
+                pump (300);
+                auto img = ed2->createComponentSnapshot (ed2->getLocalBounds(), true, 2.0f);
+                auto f = outDir.getChildFile (name + ".png");
+                f.deleteFile();
+                juce::FileOutputStream os (f);
+                juce::PNGImageFormat().writeImageToStream (img, os);
+            };
+            shoot2 ("11-trial-footer");
+            if (auto* se = dynamic_cast<SparkEditorBase*> (ed2.get())) se->showLicence();
+            shoot2 ("12-activate");
+            clockNow = clockNow + juce::RelativeTime::days (20);
+            lic.update();
+            shoot2 ("13-trial-ended");
+            ed2.reset();
+            store.deleteFile();
+        }
         return 0;
     }
 
@@ -648,6 +685,134 @@ int main (int argc, char** argv)
     }
 
     // ------------------------------------------------------------------ sound
+    std::cout << "OBSDN: licence" << std::endl;
+    {
+        const auto store = outDir.getChildFile ("licence-test.dat");
+        store.deleteFile();
+        juce::Time t0 = juce::Time::getCurrentTime(), clockNow = t0;
+        Licence::Reply next;
+        int calls = 0;
+        bool lastCounted = false;
+        auto makeLicence = [&]
+        {
+            Licence::Config c;
+            c.productName = "OBSDN"; c.productId = "test-product"; c.buyUrl = "https://example.com/obsdn";
+            c.storage = store;
+            c.clock = [&] { return clockNow; };
+            auto l = std::make_unique<Licence> (c);
+            l->setTransport ([&] (const juce::String&, const juce::String&, bool count) { ++calls; lastCounted = count; return next; });
+            return l;
+        };
+        auto waitFor = [] (bool& flag) { for (int i = 0; i < 200 && ! flag; ++i) pump (20); };
+        auto activate = [&] (Licence& l, const juce::String& k, juce::String& msg)
+        {
+            bool done = false, ok = false;
+            l.activate (k, [&] (bool good, const juce::String& text) { ok = good; msg = text; done = true; });
+            waitFor (done);
+            return ok;
+        };
+        const auto days = [] (int d) { return juce::RelativeTime::days (d); };
+
+        auto lic = makeLicence();
+        check (lic->getState() == Licence::State::trial && lic->trialDaysLeft() == 14 && ! lic->isRestricted(), "a new install starts a 14-day trial, fully unlocked");
+        clockNow = t0 + days (10);
+        check (lic->trialDaysLeft() == 4, "the trial counts down (4 days left after 10)");
+        clockNow = t0 + days (15);
+        lic->reload();
+        check (lic->getState() == Licence::State::trialOver && lic->isRestricted(), "after 14 days, unlicensed OBSDN is restricted");
+
+        juce::String msg;
+        next = {}; next.reached = true; next.success = false; next.message = "That license does not exist for the provided product.";
+        check (! activate (*lic, "BAD-KEY", msg) && msg.contains ("does not exist") && lic->isRestricted(), "a wrong key is refused with Gumroad's message");
+        next = {};   // offline
+        check (! activate (*lic, "ABCD1234-EF567890-11223344-55667788", msg) && msg.contains ("internet"), "no connection: activation says to check the internet");
+        next = {}; next.reached = true; next.success = true; next.uses = 1; next.refunded = true;
+        check (! activate (*lic, "ABCD1234-EF567890-11223344-55667788", msg) && msg.contains ("refunded"), "a refunded purchase can't be activated");
+        next = {}; next.reached = true; next.success = true; next.uses = 6;
+        check (! activate (*lic, "ABCD1234-EF567890-11223344-55667788", msg) && msg.contains ("5 computers"), "a key used on more than 5 computers is refused");
+        next = {}; next.reached = true; next.success = true; next.uses = 2; next.email = "producer@example.com";
+        check (activate (*lic, " abcd1234-ef567890-11223344-55667788 \n", msg) && lastCounted, "a good key activates (and counts one activation)");
+        check (lic->getState() == Licence::State::active && ! lic->isRestricted() && lic->getEmail() == "producer@example.com",
+               "activated: unrestricted, licensed to the buyer's email");
+        check (lic->getMaskedKey() == "****-55667788", "the key is shown masked");
+
+        auto again = makeLicence();
+        check (again->getState() == Licence::State::active, "the licence survives a restart");
+
+        // someone edits the file: the key is dropped, the trial doesn't restart
+        {
+            auto text = store.loadFileAsString().replace ("producer@example.com", "someone@else.com");
+            store.replaceWithText (text);
+            auto edited = makeLicence();
+            check (edited->getState() == Licence::State::trialOver, "an edited licence file is ignored and the trial doesn't restart");
+            store.deleteFile();
+        }
+
+        // re-checks: quiet, not counted, and a refund switches it off
+        lic = makeLicence();
+        clockNow = t0 + days (15);
+        lic->reload();
+        next = {}; next.reached = true; next.success = true; next.uses = 1; next.email = "producer@example.com";
+        activate (*lic, "ABCD1234-EF567890-11223344-55667788", msg);
+        calls = 0;
+        lic->recheckIfDue();
+        check (calls == 0, "no re-check until 14 days have passed");
+        clockNow = t0 + days (15 + 20);
+        next.refunded = false;
+        lic->recheckIfDue();
+        for (int i = 0; i < 100 && lic->isBusy(); ++i) pump (20);
+        check (calls == 1 && ! lastCounted && lic->getState() == Licence::State::active, "a re-check after 14 days doesn't count as an activation");
+        clockNow = t0 + days (15 + 40);
+        next.refunded = true;
+        lic->recheckIfDue();
+        for (int i = 0; i < 100 && lic->isBusy(); ++i) pump (20);
+        check (lic->getState() == Licence::State::trialOver && lic->isRestricted(), "a refund found at a re-check removes the licence");
+
+        // offline for a long time: the grace period runs out
+        store.deleteFile();
+        lic = makeLicence();
+        next = {}; next.reached = true; next.success = true; next.uses = 1;
+        activate (*lic, "ABCD1234-EF567890-11223344-55667788", msg);
+        const auto activatedAt = clockNow;
+        next = {};   // offline from now on
+        clockNow = activatedAt + days (60);
+        lic->recheckIfDue();
+        for (int i = 0; i < 100 && lic->isBusy(); ++i) pump (20);
+        check (lic->getState() == Licence::State::active, "offline for 60 days: still licensed");
+        clockNow = activatedAt + days (14 + 61);
+        lic->update();
+        if (lic->getState() != Licence::State::needsRecheck)
+            std::cout << "    state " << (int) lic->getState() << " restricted " << (int) lic->isRestricted() << std::endl;
+        check (lic->getState() == Licence::State::needsRecheck && lic->isRestricted(), "offline past the 74-day grace: asks to reconnect");
+
+        // the sound after the trial: 2 s dropouts in every 30 s; none once licensed
+        store.deleteFile();
+        clockNow = juce::Time::getCurrentTime();
+        auto demoLicence = makeLicence();
+        clockNow = clockNow + days (30);
+        demoLicence->reload();
+        auto gapsIn = [&] (Licence* l)
+        {
+            LeadProcessor p;
+            p.setLicenceForTesting (l);
+            p.prepareToPlay (sr, 256);
+            auto out = render (p, sr, { { 0.0, juce::MidiMessage::noteOn (1, 69, 0.9f) } }, 62.0);
+            int silentWindows = 0;
+            const int win = (int) (0.5 * sr);
+            for (int start = (int) (0.5 * sr); start + win <= out.getNumSamples(); start += win)
+                if (out.getMagnitude (0, start, win) < 1.0e-4f) ++silentWindows;
+            return silentWindows;
+        };
+        const int restrictedGaps = gapsIn (demoLicence.get());
+        check (restrictedGaps >= 4 && restrictedGaps <= 8, "after the trial the sound drops out (2 s in every 30 s: "
+               + juce::String (restrictedGaps) + " silent half-seconds in 62 s)");
+        next = {}; next.reached = true; next.success = true; next.uses = 1;
+        activate (*demoLicence, "ABCD1234-EF567890-11223344-55667788", msg);
+        check (gapsIn (demoLicence.get()) == 0, "once activated, no dropouts");
+        check (gapsIn (nullptr) == 0, "the free beta (no licence) never drops out");
+        store.deleteFile();
+    }
+
     std::cout << "OBSDN: sound library" << std::endl;
     {
         const auto& lib = factory::sounds();

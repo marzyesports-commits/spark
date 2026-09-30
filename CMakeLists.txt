@@ -61,6 +61,8 @@ set(SPARK_SHARED_SOURCES
     Source/Common/Lineage.cpp
     Source/Common/SparkProcessorBase.cpp
     Source/Common/Components.cpp
+    Source/Common/Licence.cpp
+    Source/Common/LicenceView.cpp
     Source/Common/Wavetable.cpp
     Source/Common/UndoHistory.cpp
     Source/Common/Cards.cpp
@@ -138,7 +140,7 @@ spark_configure(Spark)
 target_link_libraries(Spark PRIVATE SparkSounds)
 
 # ---------- OBSDN (lead synth + riff writer, jade theme) ----------
-set(OBSDN_VERSION 0.6.0)
+set(OBSDN_VERSION 0.7.0)
 juce_add_plugin(OBSDN
     VERSION ${OBSDN_VERSION}
     COMPANY_NAME "Spark Audio"
@@ -162,6 +164,13 @@ target_sources(OBSDN PRIVATE ${OBSDN_SOURCES})
 spark_configure(OBSDN)
 target_link_libraries(OBSDN PRIVATE OBSDNSounds)
 target_compile_definitions(OBSDN PRIVATE SPARK_THEME_OBSDN=1)
+# Licence keys: set these (CI reads them from repository variables) to switch on the trial and activation.
+# Left empty, OBSDN builds as the free beta with no licensing.
+set(OBSDN_GUMROAD_PRODUCT_ID "" CACHE STRING "Gumroad product_id for OBSDN licence keys (empty = no licensing)")
+set(OBSDN_BUY_URL "" CACHE STRING "The page where people buy OBSDN")
+target_compile_definitions(OBSDN PRIVATE
+    OBSDN_GUMROAD_PRODUCT_ID="${OBSDN_GUMROAD_PRODUCT_ID}"
+    OBSDN_BUY_URL="${OBSDN_BUY_URL}")
 
 # ---------- Offline tests (not shipped) ----------
 option(SPARK_BUILD_TESTS "Build the offline render tests" OFF)

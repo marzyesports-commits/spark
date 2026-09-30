@@ -386,6 +386,9 @@ private:
 
 // Base editor shared by both plugins: scales a fixed 1120x720 design to the window,
 // and lays out the header, core, amounts, facets and lineage. Subclasses fill the left column.
+class LicenceFooter;
+class LicencePanel;
+
 class SparkEditorBase : public juce::AudioProcessorEditor,
                         public juce::DragAndDropContainer
 {
@@ -398,6 +401,7 @@ public:
     void resized() override;
 
     static constexpr int designWidth = 1120, designHeight = 720;
+    void showLicence();   // the activation screen (does nothing when the plugin has no licence)
 
 protected:
     // area for the left column inside the design (296 x 440)
@@ -431,6 +435,8 @@ private:
     FacetList facets;
     LineageStrip lineage;
     PresetBrowser browser;
+    std::unique_ptr<LicenceFooter> licenceFooter;
+    std::unique_ptr<LicencePanel> licencePanel;
     juce::TooltipWindow tooltips { nullptr, 600 };
 };
 } // namespace spark

@@ -82,6 +82,7 @@ Spark 1.3 retires the separate Spark FX plugin; its sound lives on in the FX pag
 - **Keep it.** Drag **DRAG MIDI** onto a MIDI track to drop the riff into your song, or click it to save a `.mid` file. Presets change the sound, never the riff, and projects save the exact riff.
 - **FX page.** The same 7-effect rack as Spark.
 - **59 presets** in Supersaw, Future, Drill & Trap, **DnB & Bass** (Reese, neuro stab, liquid, dancefloor pluck, hoover, growl and garage organ), Afro & Amapiano, Retro 80s, Chip, Classic and **Sound Design** (vowel, choir, bell, whistle and wavetable leads that bring their own sound), level-matched.
+- **Licence keys.** Sold through Gumroad. With `OBSDN_GUMROAD_PRODUCT_ID` (and `OBSDN_BUY_URL`) set at build time, OBSDN runs a 14-day full trial, then asks for a key: until it's activated, the sound drops out for 2 s in every 30 s and DRAG MIDI is locked. Activation checks the key with Gumroad's licence API (up to 5 computers per key), re-checks every 14 days and keeps working offline for 60 days after that. The key lives in a signed file in the user's settings folder (`Spark Audio/OBSDN/licence.dat`). Leave the product id empty (the default) for a build with no licensing. CI reads both from the repository variables of the same names.
 
 ## Installing on a Mac
 

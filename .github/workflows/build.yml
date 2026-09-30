@@ -12,7 +12,7 @@ permissions:
 
 env:
   VERSION: 1.5.0        # Spark. A "-dev" version builds and tests but doesn't publish; a version that's already released isn't re-published
-  OBSDN_VERSION: 0.6.0  # OBSDN (published as a pre-release while it's in beta)
+  OBSDN_VERSION: 0.7.0  # OBSDN (published as a pre-release while it's in beta)
 
 jobs:
   macos:
@@ -61,7 +61,9 @@ jobs:
             -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 \
             -DSPARK_BUILD_TESTS=ON \
-            -DSPARK_HARDENED_RUNTIME=${{ env.HAS_SIGNING == 'true' && 'ON' || 'OFF' }}
+            -DSPARK_HARDENED_RUNTIME=${{ env.HAS_SIGNING == 'true' && 'ON' || 'OFF' }} \
+            -DOBSDN_GUMROAD_PRODUCT_ID="${{ vars.OBSDN_GUMROAD_PRODUCT_ID }}" \
+            -DOBSDN_BUY_URL="${{ vars.OBSDN_BUY_URL }}"
 
       - name: Build
         run: |
@@ -149,7 +151,7 @@ jobs:
           key: juce-8.0.10-${{ runner.os }}-vs2022
 
       - name: Configure (x64)
-        run: cmake -B build -G "Visual Studio 17 2022" -A x64 -DSPARK_BUILD_TESTS=ON
+        run: cmake -B build -G "Visual Studio 17 2022" -A x64 -DSPARK_BUILD_TESTS=ON -DOBSDN_GUMROAD_PRODUCT_ID="${{ vars.OBSDN_GUMROAD_PRODUCT_ID }}" -DOBSDN_BUY_URL="${{ vars.OBSDN_BUY_URL }}"
 
       - name: Build
         run: cmake --build build --config Release --target Spark_VST3 Spark_Standalone SparkTests OBSDN_VST3 OBSDN_Standalone OBSDNTests --parallel 4
@@ -310,6 +312,9 @@ jobs:
           make_latest: false
           body: |
             **OBSDN** (beta): a lead synth that helps start your ideas. Pick a key, press Generate, and it gives you a riff to build on, then shape the sound around it. Strike the jade stone to roll new variations.
+
+            **New in 0.7**
+            - **Licence keys (ready for launch).** OBSDN can now be activated with a Gumroad licence key from the settings menu or the footer. Builds with a Gumroad product set run a 14-day full trial first; this beta has licensing switched off.
 
             **New in 0.6**
             - **Drum & bass and bass music on the RIFF page.** Six new styles: Liquid DnB, Dancefloor DnB, Neuro DnB, Jump Up, Dubstep and UK Garage. Each writes with its own rhythm (two-step bounce, half-time hits, 32nd rolls, garage shuffle) and the hint under the roll suggests a tempo.
