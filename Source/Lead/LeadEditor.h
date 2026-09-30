@@ -3,6 +3,7 @@
 #include "Common/Components.h"
 #include "Common/Cards.h"
 #include "Instrument/FxPage.h"
+#include "Instrument/ModCards.h"
 #include "LeadProcessor.h"
 
 namespace spark
@@ -102,7 +103,7 @@ private:
 class LeadSynthPage : public juce::Component
 {
 public:
-    explicit LeadSynthPage (LeadProcessor&);
+    LeadSynthPage (LeadProcessor&, ModDropHandler onKnobDrop);
     void paint (juce::Graphics&) override;
     void resized() override;
 
@@ -113,6 +114,20 @@ private:
     LeadCard expression { "EXPRESSION", "Vibrato waits, then fades in" };
     LeadCard play { "PLAY", {} };
     LeadCard output { "OUTPUT", {} };
+};
+
+// MOD page: two LFOs, four macros and the 8-slot matrix. Drag a source's handle onto a facet or knob.
+class LeadModPage : public juce::Component
+{
+public:
+    explicit LeadModPage (LeadProcessor&);
+    void paint (juce::Graphics&) override;
+    void resized() override;
+
+private:
+    LfoCard lfo1, lfo2;
+    MacroCard macros;
+    MatrixCard matrix;
 };
 
 // ---- Riff ---------------------------------------------------------------------
@@ -223,7 +238,8 @@ class LeadEditor : public SparkEditorBase,
 public:
     explicit LeadEditor (LeadProcessor&);
     ~LeadEditor() override;
-    void showPage (int page);   // 0 LEAD, 1 SYNTH, 2 RIFF, 3 FX
+    void showPage (int page);   // 0 LEAD, 1 SYNTH, 2 MOD, 3 RIFF, 4 FX
+    enum Page { leadPage = 0, synthPage_ = 1, modPage_ = 2, riffPage_ = 3, fxPage_ = 4 };
 
     // drop a sound anywhere on OBSDN: it becomes oscillator A
     bool isInterestedInFileDrag (const juce::StringArray& files) override;
@@ -233,9 +249,12 @@ public:
 
 private:
     void hideOtherOverlays() override;
+    void handleModDrop (int source, int facet) override;   // from the ring or the facet list
+    void assignModulation (int source, int dest);          // from a knob
     LeadProcessor& processor;
     OscPanel osc;
     LeadSynthPage synthPage;
+    LeadModPage modPage;
     RiffPage riffPage;
     FxPage fxPage;
 };

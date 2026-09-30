@@ -12,6 +12,8 @@ namespace mod
 {
     enum Source { none = 0, lfo1, lfo2, macro1, macro2, macro3, macro4, modWheel, aftertouch, velocity, numSources };
     enum Dest { pitch = 0, position, grain, morph, tone, drive, motion, space, resonance, volume, numDests };
+    // OBSDN uses the same slots for its own facets
+    enum LeadDest { leadWave = position, leadDetune = grain, leadBite = morph, leadVibrato = motion };
     enum Shape { sine = 0, triangle, sawUp, sawDown, square, sampleHold, drift, numShapes };
 
     constexpr int numSlots = 8;

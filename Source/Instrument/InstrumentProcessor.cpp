@@ -104,6 +104,7 @@ InstrumentProcessor::InstrumentProcessor()
     : SparkProcessorBase (BusesProperties().withOutput ("Output", juce::AudioChannelSet::stereo(), true),
                           instrumentFacets(), addInstrumentParameters, makeInstrumentPresets(), "instrument"),
       FxHost (static_cast<SparkProcessorBase&> (*this)),
+      ModHost (static_cast<SparkProcessorBase&> (*this), static_cast<FxHost&> (*this)),
       synth (*this)
 {
     formats.registerBasicFormats();
@@ -143,12 +144,7 @@ InstrumentProcessor::InstrumentProcessor()
     params.noiseLevel = apvts.getRawParameterValue ("noiseLevel");
     params.noiseColour = apvts.getRawParameterValue ("noiseColour");
     rack.attach (apvts);
-    modParams.attach (apvts);
-    for (int l = 0; l < mod::numLfos; ++l)
-    {
-        modState.held[l] = modRandom.nextFloat() * 2.0f - 1.0f;
-        modState.next[l] = modRandom.nextFloat() * 2.0f - 1.0f;
-    }
+    attachModulation (apvts);
 
     installSource (makeBuiltInSource());
     applyPresetSound (getPreset (getPresetIndex()));   // the first preset's sound (the base class couldn't do this yet)
@@ -518,7 +514,7 @@ void InstrumentProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
             if (auto q = pos->getPpqPosition()) { ppq = *q; playing = pos->getIsPlaying(); }
         }
 
-    updateModulation (n, midi, bpm, ppq, playing);
+    updateModulation (midi, bpm, ppq, playing, currentSampleRate);
     synth.renderNextBlock (buffer, midi, 0, n);
 
     const int numCh = buffer.getNumChannels();
@@ -529,18 +525,7 @@ void InstrumentProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
     if (numCh == 2)
         rack.process (buffer, bpm, ppq, playing, spaceNow);
 
-    // advance the free-running LFOs past this block
-    for (int l = 0; l < mod::numLfos; ++l)
-    {
-        double ph = modState.lfoPhase[l] + modState.lfoInc[l] * n;
-        if (ph >= 1.0)
-        {
-            ph -= std::floor (ph);
-            modState.held[l] = modState.next[l];
-            modState.next[l] = modRandom.nextFloat() * 2.0f - 1.0f;
-        }
-        modState.lfoPhase[l] = ph;
-    }
+    advanceLfos (n);
 
     // Level, then a transparent safety clipper: untouched below 0.8, rounds off smoothly above
     // so stacked chords or hot samples never hard-clip the DAW's input.
@@ -558,140 +543,9 @@ void InstrumentProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
     }
 }
 
-void InstrumentProcessor::updateModulation (int numSamples, const juce::MidiBuffer& midi, double bpm, double ppq, bool playing)
-{
-    auto& st = modState;
-    for (const auto m : midi)
-    {
-        const auto msg = m.getMessage();
-        if (msg.isController() && msg.getControllerNumber() == 1) st.modWheel = (float) msg.getControllerValue() / 127.0f;
-        else if (msg.isChannelPressure()) st.aftertouch = (float) msg.getChannelPressureValue() / 127.0f;
-        else if (msg.isAftertouch()) st.aftertouch = (float) msg.getAfterTouchValue() / 127.0f;
-    }
-    for (int m = 0; m < mod::numMacros; ++m)
-        st.macro[m] = modParams.macro[m]->load();
 
-    st.numActive = 0;
-    for (auto& u : st.usesLfo) u = false;
-    for (int s = 0; s < mod::numSlots; ++s)
-    {
-        const int src = juce::roundToInt (modParams.src[s]->load());
-        const float amt = modParams.amt[s]->load();
-        if (src == mod::none || std::abs (amt) < 1.0e-4f)
-            continue;
-        auto& slot = st.slots[st.numActive++];
-        slot.src = src;
-        slot.dst = juce::jlimit (0, mod::numDests - 1, juce::roundToInt (modParams.dst[s]->load()));
-        slot.amount = amt;
-        if (src == mod::lfo1 || src == mod::lfo2) st.usesLfo[src - mod::lfo1] = true;
-    }
 
-    float sources[mod::numSources] {};
-    for (int l = 0; l < mod::numLfos; ++l)
-    {
-        st.shape[l] = juce::roundToInt (modParams.shape[l]->load());
-        st.retrigger[l] = modParams.retrig[l]->load() > 0.5f;
-        const bool synced = modParams.sync[l]->load() > 0.5f;
-        double hz = mod::rateHz (modParams.rate[l]->load());
-        if (synced)
-        {
-            const double beats = mod::divisionBeats (juce::roundToInt (modParams.division[l]->load()));
-            hz = bpm / 60.0 / beats;
-            if (playing)
-            {
-                // lock to the host's bar position
-                const double cycles = ppq / beats;
-                if (std::floor (cycles) != std::floor (lastSyncCycle[l]))
-                {
-                    st.held[l] = st.next[l];
-                    st.next[l] = modRandom.nextFloat() * 2.0f - 1.0f;
-                }
-                lastSyncCycle[l] = cycles;
-                st.lfoPhase[l] = cycles - std::floor (cycles);
-            }
-        }
-        st.lfoInc[l] = hz / juce::jmax (1.0, currentSampleRate);
-        const float v = mod::shapeValue (st.shape[l], (float) st.lfoPhase[l], st.held[l], st.next[l]);
-        sources[mod::lfo1 + l] = v;
-        liveLfo[(size_t) l].store (v);
-        liveLfoPhase[(size_t) l].store ((float) st.lfoPhase[l]);
-    }
-    for (int m = 0; m < mod::numMacros; ++m) sources[mod::macro1 + m] = st.macro[m];
-    sources[mod::modWheel] = st.modWheel;
-    sources[mod::aftertouch] = st.aftertouch;
-    sources[mod::velocity] = 0.8f;   // global view only; voices use their own velocity
 
-    float offsets[mod::numDests] {};
-    st.route (sources, offsets);
-    for (int d = 0; d < mod::numDests; ++d)
-        liveMod[(size_t) d].store (offsets[d]);
-    juce::ignoreUnused (numSamples);
-}
-
-float InstrumentProcessor::defaultAmountFor (int dest) const
-{
-    switch (dest)
-    {
-        case mod::pitch:  return 0.02f;   // about +/-1 semitone: vibrato
-        case mod::volume: return -0.5f;   // tremolo / ducking
-        default:          return 0.3f;
-    }
-}
-
-int InstrumentProcessor::assignModulation (int source, int dest, float amount)
-{
-    if (source <= mod::none || source >= mod::numSources || dest < 0 || dest >= mod::numDests)
-        return -1;
-    auto setChoice = [this] (const juce::String& id, int index, int count)
-    {
-        if (auto* p = apvts.getParameter (id))
-        {
-            p->beginChangeGesture();
-            p->setValueNotifyingHost ((float) index / (float) juce::jmax (1, count - 1));
-            p->endChangeGesture();
-        }
-    };
-    auto setAmount = [this] (int slot, float a)
-    {
-        if (auto* p = apvts.getParameter (mod::slotParam (slot, "Amt")))
-        {
-            p->beginChangeGesture();
-            p->setValueNotifyingHost (p->convertTo0to1 (juce::jlimit (-1.0f, 1.0f, a)));
-            p->endChangeGesture();
-        }
-    };
-    // already routed? just set the amount
-    for (int s = 0; s < mod::numSlots; ++s)
-        if (juce::roundToInt (modParams.src[s]->load()) == source && juce::roundToInt (modParams.dst[s]->load()) == dest)
-        {
-            setAmount (s, amount);
-            return s;
-        }
-    for (int s = 0; s < mod::numSlots; ++s)
-        if (juce::roundToInt (modParams.src[s]->load()) == mod::none)
-        {
-            setChoice (mod::slotParam (s, "Dst"), dest, mod::numDests);
-            setAmount (s, amount);
-            setChoice (mod::slotParam (s, "Src"), source, mod::numSources);
-            sendChangeMessage();
-            return s;
-        }
-    return -1;
-}
-
-void InstrumentProcessor::clearModulation (int slot)
-{
-    if (slot < 0 || slot >= mod::numSlots)
-        return;
-    for (auto* what : { "Src", "Dst", "Amt" })
-        if (auto* p = apvts.getParameter (mod::slotParam (slot, what)))
-        {
-            p->beginChangeGesture();
-            p->setValueNotifyingHost (p->getDefaultValue());
-            p->endChangeGesture();
-        }
-    sendChangeMessage();
-}
 
 juce::AudioProcessorEditor* InstrumentProcessor::createEditor()
 {
@@ -715,25 +569,7 @@ std::vector<juce::RangedAudioParameter*> InstrumentProcessor::getRandomisableExt
         out.push_back (apvts.getParameter ("noiseLevel"));
         out.push_back (apvts.getParameter ("noiseColour"));
     }
-    if (isModuleLocked ("mod"))
-        return out;
-
-    // Modulation in use: the amounts, the macros they read and the speed of the LFOs they use
-    bool lfoUsed[mod::numLfos] {}, macroUsed[mod::numMacros] {};
-    for (int s = 0; s < mod::numSlots; ++s)
-    {
-        const int src = juce::roundToInt (modParams.src[s]->load());
-        if (src == mod::none) continue;
-        out.push_back (apvts.getParameter (mod::slotParam (s, "Amt")));
-        if (src == mod::lfo1 || src == mod::lfo2) lfoUsed[src - mod::lfo1] = true;
-        if (src >= mod::macro1 && src <= mod::macro4) macroUsed[src - mod::macro1] = true;
-    }
-    for (int l = 0; l < mod::numLfos; ++l)
-        if (lfoUsed[l])
-            out.push_back (apvts.getParameter (mod::lfoParam (l, modParams.sync[l]->load() > 0.5f ? "Div" : "Rate")));
-    for (int m = 0; m < mod::numMacros; ++m)
-        if (macroUsed[m])
-            out.push_back (apvts.getParameter (mod::macroParam (m)));
+    addModExtras (out);
     return out;
 }
 

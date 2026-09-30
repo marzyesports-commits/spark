@@ -87,7 +87,8 @@ void SynthCard::resized()
 
 void SynthCard::paint (juce::Graphics& g)
 {
-    drawCard (g, getLocalBounds().toFloat(), title, blurb, (float) getWidth() * 0.4f);
+    // with no blurb the title can use the whole width (narrow cards like OUTPUT)
+    drawCard (g, getLocalBounds().toFloat(), title, blurb, blurb.isEmpty() ? (float) getWidth() - 28.0f : (float) getWidth() * 0.4f);
 }
 
 } // namespace spark

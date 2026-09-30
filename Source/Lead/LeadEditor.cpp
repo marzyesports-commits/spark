@@ -404,7 +404,7 @@ void AdsrCard::paint (juce::Graphics& g)
 }
 
 // =====================================================================================
-LeadSynthPage::LeadSynthPage (LeadProcessor& p)
+LeadSynthPage::LeadSynthPage (LeadProcessor& p, ModDropHandler onKnobDrop)
     : filterType (param (p, "filterType"), { "LOW", "HIGH", "BAND", "NOTCH" },
                   { "Low-pass: keeps the lows, darkens as you close it", "High-pass: thins the sound out",
                     "Band-pass: a nasal band around the cutoff", "Notch: cuts a band around the cutoff" }),
@@ -415,12 +415,15 @@ LeadSynthPage::LeadSynthPage (LeadProcessor& p)
       ampEnv ("AMP ENV", {}, p.apvts, "amp")
 {
     filter.setSegments (filterType);
-    filter.addKnob (p.facetParam (LeadProcessor::tone), "CUTOFF", "Filter cutoff (the Tone facet)");
-    filter.addKnob (param (p, "resonance"), "RES", "Resonance: a peak at the cutoff (Bite adds more)");
+    auto& cutoff = filter.addKnob (p.facetParam (LeadProcessor::tone), "CUTOFF", "Filter cutoff (the Tone facet). Drop an LFO or macro here to modulate it");
+    auto& res = filter.addKnob (param (p, "resonance"), "RES", "Resonance: a peak at the cutoff (Bite adds more). Drop an LFO or macro here to modulate it");
+    cutoff.modDest = mod::tone;
+    res.modDest = mod::resonance;
     filter.addKnob (param (p, "keyTrack"), "KEY", "Key tracking: higher notes open the filter more");
     filter.addKnob (param (p, "velTone"), "VEL", "Play harder for a brighter note");
 
-    expression.addKnob (p.facetParam (LeadProcessor::vibrato), "DEPTH", "Vibrato depth (the Vibrato facet). The mod wheel adds more");
+    auto& depth = expression.addKnob (p.facetParam (LeadProcessor::vibrato), "DEPTH", "Vibrato depth (the Vibrato facet). The mod wheel adds more");
+    depth.modDest = mod::leadVibrato;
     expression.addKnob (param (p, "vibRate"), "RATE", "Vibrato speed");
     expression.addKnob (param (p, "vibDelay"), "DELAY", "How long a note is held before vibrato fades in");
     expression.addKnob (param (p, "scoop"), "SCOOP", "Each new note starts a little flat and bends up into pitch");
@@ -431,7 +434,10 @@ LeadSynthPage::LeadSynthPage (LeadProcessor& p)
     play.addKnob (param (p, "bendRange"), "BEND", "Pitch bend range in semitones");
     play.addKnob (param (p, "ampVel"), "VEL", "Play harder for a louder note");
 
-    output.addKnob (param (p, "level"), "LEVEL", "Final level, with a safety limiter");
+    auto& level = output.addKnob (param (p, "level"), "LEVEL", "Final level, with a safety limiter. Drop an LFO here for tremolo");
+    level.modDest = mod::volume;
+    for (auto* k : { &cutoff, &res, &depth, &level })
+        k->onModDrop = onKnobDrop;
 
     for (auto* c : std::initializer_list<juce::Component*> { &filter, &filterEnv, &ampEnv, &expression, &play, &output })
         addAndMakeVisible (c);
@@ -454,6 +460,33 @@ void LeadSynthPage::resized()
 }
 
 void LeadSynthPage::paint (juce::Graphics& g)
+{
+    auto b = getLocalBounds().toFloat();
+    g.setColour (colours::bg);
+    g.fillRoundedRectangle (b, 16.0f);
+    g.setColour (colours::line2);
+    g.drawRoundedRectangle (b.reduced (0.5f), 16.0f, 1.0f);
+}
+
+// =====================================================================================
+LeadModPage::LeadModPage (LeadProcessor& p) : lfo1 (p, 0), lfo2 (p, 1), macros (p), matrix (p)
+{
+    for (auto* c : std::initializer_list<juce::Component*> { &lfo1, &lfo2, &macros, &matrix })
+        addAndMakeVisible (c);
+}
+
+void LeadModPage::resized()
+{
+    const int gap = 12, pad = 16;
+    const int w = getWidth() - 2 * pad, h = getHeight() - 2 * pad - gap;
+    const int topH = h / 2 + 12, third = (w - 2 * gap) / 3;
+    lfo1.setBounds (pad, pad, third, topH);
+    lfo2.setBounds (pad + third + gap, pad, third, topH);
+    macros.setBounds (pad + 2 * (third + gap), pad, w - 2 * (third + gap), topH);
+    matrix.setBounds (pad, pad + topH + gap, w, h - topH);
+}
+
+void LeadModPage::paint (juce::Graphics& g)
 {
     auto b = getLocalBounds().toFloat();
     g.setColour (colours::bg);
@@ -926,8 +959,9 @@ namespace
     {
         EditorStyle s;
         s.badge = {};
-        s.tabs = { "LEAD", "SYNTH", "RIFF", "FX" };
+        s.tabs = { "LEAD", "SYNTH", "MOD", "RIFF", "FX" };
         s.tabTips = { "The sound: oscillators and facets", "Filter, envelopes, vibrato, scoop and glide",
+                      "LFOs, macros and the mod matrix: drag a handle onto a facet or knob",
                       "Riff: write and play lead lines", "The effects rack" };
         s.aboutTitle = "OBSDN";
         s.aboutText = "Hooks on demand. Pick a sound, let the riff writer find the line, strike the stone until it's yours.";
@@ -936,12 +970,13 @@ namespace
 }
 
 LeadEditor::LeadEditor (LeadProcessor& p)
-    : SparkEditorBase (p, leadStyle()), processor (p), osc (p), synthPage (p), riffPage (p), fxPage (p)
+    : SparkEditorBase (p, leadStyle()), processor (p), osc (p),
+      synthPage (p, [this] (int src, int dest) { assignModulation (src, dest); }), modPage (p), riffPage (p), fxPage (p)
 {
     auto& c = content();
     c.addAndMakeVisible (osc);
     osc.setBounds (leftColumn());
-    for (auto* page : std::initializer_list<juce::Component*> { &synthPage, &riffPage, &fxPage })
+    for (auto* page : std::initializer_list<juce::Component*> { &synthPage, &modPage, &riffPage, &fxPage })
     {
         c.addChildComponent (page);
         page->setBounds (24, 86, 1072, 440);
@@ -974,13 +1009,36 @@ void LeadEditor::filesDropped (const juce::StringArray& files, int, int)
 
 void LeadEditor::hideOtherOverlays() {}
 
+void LeadEditor::assignModulation (int source, int dest)
+{
+    if (processor.assignModulation (source, dest, processor.defaultAmountFor (dest)) < 0)
+        showMessage ("All 8 modulation slots are in use", "Clear one in the MOD MATRIX on the MOD page, then try again.");
+}
+
+void LeadEditor::handleModDrop (int source, int facet)
+{
+    const int dest = LeadProcessor::destForFacet (facet);
+    if (dest < 0)
+    {
+        showMessage ("Glide can't be modulated", "Try Wave, Detune, Tone, Bite, Drive, Vibrato or Space.");
+        return;
+    }
+    if (processor.assignModulation (source, dest, processor.defaultAmountFor (dest)) < 0)
+    {
+        showMessage ("All 8 modulation slots are in use", "Clear one in the MOD MATRIX on the MOD page, then try again.");
+        return;
+    }
+    getCore().flashFacet (facet);
+}
+
 void LeadEditor::showPage (int page)
 {
     setBrowserVisible (false);
     synthPage.setVisible (page == 1);
-    riffPage.setVisible (page == 2);
-    fxPage.setVisible (page == 3);
-    for (auto* c : std::initializer_list<juce::Component*> { &synthPage, &riffPage, &fxPage })
+    modPage.setVisible (page == 2);
+    riffPage.setVisible (page == 3);
+    fxPage.setVisible (page == 4);
+    for (auto* c : std::initializer_list<juce::Component*> { &synthPage, &modPage, &riffPage, &fxPage })
         if (c->isVisible()) c->toFront (false);
     getHeader().setPage (page);
 }

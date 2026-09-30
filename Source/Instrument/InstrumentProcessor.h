@@ -6,6 +6,7 @@
 #include "Common/Wavetable.h"
 #include "Common/Envelope.h"
 #include "FxHost.h"
+#include "ModHost.h"
 #include "Modulation.h"
 #include "SourceData.h"
 
@@ -36,6 +37,7 @@ private:
 
 class InstrumentProcessor : public SparkProcessorBase,
                             public FxHost,
+                            public ModHost,
                             private juce::Timer
 {
 public:
@@ -138,16 +140,6 @@ public:
     // Audio thread only: the note a new mono voice glides from (-1 = no glide). Set by SparkSynth.
     int glideFromNote = -1;
 
-    // ---- modulation
-    mod::Params modParams;
-    mod::BlockState modState;                                   // audio thread: this block's routing and LFO phases
-    std::array<std::atomic<float>, mod::numDests> liveMod {};   // for the UI: current offset on each destination
-    std::array<std::atomic<float>, mod::numLfos> liveLfo {};    // for the UI: each LFO's current value
-    std::array<std::atomic<float>, mod::numLfos> liveLfoPhase {};
-    // Adds a routing in the first free slot (or updates an existing one). Returns the slot, or -1 if all 8 are used.
-    int assignModulation (int source, int dest, float amount);
-    void clearModulation (int slot);
-    float defaultAmountFor (int dest) const;
 
     // ---- AudioProcessor
     const juce::String getName() const override { return "Spark"; }
@@ -183,9 +175,6 @@ private:
     std::atomic<bool> soundLocked { false };
     juce::String lastShapeshift;
     juce::SmoothedValue<float> levelSmooth;
-    void updateModulation (int numSamples, const juce::MidiBuffer&, double bpm, double ppq, bool playing);
-    juce::Random modRandom;
-    double lastSyncCycle[mod::numLfos] {};
     double currentSampleRate = 44100.0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (InstrumentProcessor)

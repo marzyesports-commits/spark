@@ -62,6 +62,13 @@ void LeadVoice::startNote (int midiNote, float vel, juce::SynthesiserSound*, int
     for (int u = 0; u < maxUnison; ++u)
         phaseA[u] = u == maxUnison / 2 ? 0.0 : random.nextDouble();
     source = processor.getSource();
+    for (int lf = 0; lf < mod::numLfos; ++lf)
+    {
+        lfoVoicePhase[lf] = 0.0;
+        lfoHeld[lf] = random.nextFloat() * 2.0f - 1.0f;
+        lfoNext[lf] = random.nextFloat() * 2.0f - 1.0f;
+    }
+    volumeNow = -1.0f;
     for (auto& g : grains) g.active = false;
     samplesToNextGrain = 0.0;
     noteSeconds = 0.0;
@@ -148,7 +155,7 @@ void LeadVoice::renderNextBlock (juce::AudioBuffer<float>& out, int startSample,
     for (int done = 0; done < numSamples;)
     {
         const int n = juce::jmin (chunk, numSamples - done);
-        render (l + done, r + done, n);
+        render (l + done, r + done, n, startSample + done);
         done += n;
     }
     if (out.getNumChannels() > 1)
@@ -165,8 +172,14 @@ void LeadVoice::renderNextBlock (juce::AudioBuffer<float>& out, int startSample,
         clearCurrentNote();
 }
 
-void LeadVoice::render (float* l, float* r, int n)
+void LeadVoice::render (float* l, float* r, int n, int blockOffset)
 {
+    // modulation for this chunk: each routing's offset on its destination (normalised units)
+    float offs[mod::numDests] {};
+    if (processor.modState.active())
+        computeModulation (blockOffset, n, offs);
+    auto modded = [&] (int facet, int dest) { return juce::jlimit (0.0f, 1.0f, processor.params.facet[facet]->load() + offs[dest]); };
+    const float waveNow = modded (LeadProcessor::wave, mod::leadWave);
     auto& p = processor.params;
     const double sr = getSampleRate();
     const float dt = (float) n / (float) sr;
@@ -175,7 +188,7 @@ void LeadVoice::render (float* l, float* r, int n)
 
     // ---- pitch: glide, bend, scoop, vibrato, fall-off
     const float bend = ((float) wheelValue - 8192.0f) / 8192.0f * p.bendRange->load();
-    const float vibDepth = leadfmt::vibratoSemis (p.facet[LeadProcessor::vibrato]->load()) + processor.modWheel * 0.5f;
+    const float vibDepth = leadfmt::vibratoSemis (modded (LeadProcessor::vibrato, mod::leadVibrato)) + processor.modWheel * 0.5f;
     const float vibWait = p.vibDelay->load();
     const float vibIn = juce::jlimit (0.0f, 1.0f, (float) (sinceAttack - vibWait) / 0.35f);
     const float vib = (float) std::sin (vibPhase * juce::MathConstants<double>::twoPi) * vibDepth * vibIn;
@@ -192,7 +205,7 @@ void LeadVoice::render (float* l, float* r, int n)
     const float scoopTau = 0.025f + std::abs (scoopNow) * 0.025f;
     scoopNow *= std::exp (-dt / scoopTau);
 
-    const float pitch = pitchNote + bend + vib + scoopNow + fallNow;
+    const float pitch = pitchNote + bend + vib + scoopNow + fallNow + offs[mod::pitch] * 48.0f;
     const double baseHz = 440.0 * std::exp2 ((pitch - 69.0f) / 12.0f);
     if (glideLeft > 0)
     {
@@ -204,11 +217,11 @@ void LeadVoice::render (float* l, float* r, int n)
     sinceAttack += dt;
 
     // ---- oscillator A: unison stack
-    const float detune = p.facet[LeadProcessor::detune]->load();
+    const float detune = modded (LeadProcessor::detune, mod::leadDetune);
     const int voices = juce::jlimit (1, maxUnison, juce::roundToInt (p.unison->load()));
     const float spread = std::pow (detune, 1.5f) * 0.5f;   // semitones at the outer copies
     const float width = p.width->load();
-    float framesA = p.facet[LeadProcessor::wave]->load() * lastFrame;
+    float framesA = waveNow * lastFrame;
     double incA[maxUnison];
     int mipA[maxUnison];
     float gainL[maxUnison], gainR[maxUnison];
@@ -239,7 +252,7 @@ void LeadVoice::render (float* l, float* r, int n)
         tableA = src->table.get();
         gainA = src->tableGain;
         const float scan = p.scanTime->load();
-        float pos = p.facet[LeadProcessor::wave]->load();
+        float pos = waveNow;
         if (scan > 0.001f)
             pos += (1.0f - pos) * (float) juce::jmin (1.0, noteSeconds / (double) fmt::envSeconds (scan));
         framesA = juce::jlimit (0.0f, 1.0f, pos) * (float) (tableA->getNumFrames() - 1);
@@ -264,10 +277,10 @@ void LeadVoice::render (float* l, float* r, int n)
         double detuneRatios[maxUnison];
         for (int u = 0; u < voices; ++u) detuneRatios[u] = incA[u] / (baseHz / sr);
         if (mode == LeadProcessor::grain)
-            renderGrains (l, r, n, *src, ratio, detuneRatios, gainL, gainR, voices, p.facet[LeadProcessor::wave]->load(),
+            renderGrains (l, r, n, *src, ratio, detuneRatios, gainL, gainR, voices, waveNow,
                           fmt::grainSeconds (p.grainSize->load()), p.grainSpray->load());
         else
-            renderSample (l, r, n, *src, ratio, detuneRatios, gainL, gainR, voices, p.facet[LeadProcessor::wave]->load());
+            renderSample (l, r, n, *src, ratio, detuneRatios, gainL, gainR, voices, waveNow);
         for (int i = 0; i < n; ++i) { l[i] *= src->audioGain; r[i] *= src->audioGain; }
     }
     for (int i = 0; i < n; ++i)
@@ -310,18 +323,21 @@ void LeadVoice::render (float* l, float* r, int n)
     // ---- drive, filter, amp
     const auto ampS = processor.ampSettings();
     const auto fltS = processor.filterSettings();
-    const float bite = p.facet[LeadProcessor::bite]->load();
+    const float bite = modded (LeadProcessor::bite, mod::leadBite);
     const float velTone = p.velTone->load();
     const float keyTrack = p.keyTrack->load();
-    const float targetCutoff = leadfmt::cutoffHz (p.facet[LeadProcessor::tone]->load())
+    const float targetCutoff = leadfmt::cutoffHz (modded (LeadProcessor::tone, mod::tone))
                                * std::exp2 ((pitchNote - 60.0f) / 12.0f * keyTrack)
                                * std::exp2 (velTone * 2.0f * (velocity - 1.0f))
                                * std::exp2 (processor.pressure * 1.5f);
     const float envOctaves = bite * 5.0f;
-    const float q = fmt::filterQ (juce::jlimit (0.0f, 1.0f, p.resonance->load() + bite * 0.25f));
+    const float q = fmt::filterQ (juce::jlimit (0.0f, 1.0f, p.resonance->load() + offs[mod::resonance] + bite * 0.25f));
     const int type = juce::roundToInt (p.filterType->load());
     const float nyquistSafe = (float) sr * 0.45f;
-    const float targetDrive = p.facet[LeadProcessor::drive]->load();
+    const float targetDrive = modded (LeadProcessor::drive, mod::drive);
+    const float volume = juce::jmax (0.0f, 1.0f + offs[mod::volume]);
+    if (volumeNow < 0.0f) volumeNow = volume;
+    const float volStep = (volume - volumeNow) / (float) juce::jmax (1, n);
     const float ampGain = 1.0f - p.ampVel->load() * (1.0f - velocity);
 
     for (int i = 0; i < n; ++i)
@@ -333,10 +349,43 @@ void LeadVoice::render (float* l, float* r, int n)
             filter.set (juce::jlimit (20.0f, nyquistSafe, cutoffNow * std::exp2 (envOctaves * fe)), q, sr);
         const float g = 1.0f + driveNow * 10.0f;
         const float makeup = 1.0f / std::sqrt (g);
-        const float env = ampEnv.next (ampS) * ampGain;
+        const float env = ampEnv.next (ampS) * ampGain * (volumeNow + volStep * (float) i);
         l[i] = filter.process (0, std::tanh (g * l[i]) * makeup, type) * env;
         r[i] = filter.process (1, std::tanh (g * r[i]) * makeup, type) * env;
     }
+    volumeNow = volume;
+}
+
+void LeadVoice::computeModulation (int blockOffset, int n, float (&offsets)[mod::numDests])
+{
+    const auto& ms = processor.modState;
+    float src[mod::numSources] {};
+    for (int lf = 0; lf < mod::numLfos; ++lf)
+    {
+        if (! ms.usesLfo[lf]) continue;
+        if (ms.retrigger[lf])
+        {
+            src[mod::lfo1 + lf] = mod::shapeValue (ms.shape[lf], (float) lfoVoicePhase[lf], lfoHeld[lf], lfoNext[lf]);
+            lfoVoicePhase[lf] += ms.lfoInc[lf] * n;
+            if (lfoVoicePhase[lf] >= 1.0)
+            {
+                lfoVoicePhase[lf] -= std::floor (lfoVoicePhase[lf]);
+                lfoHeld[lf] = lfoNext[lf];
+                lfoNext[lf] = random.nextFloat() * 2.0f - 1.0f;
+            }
+        }
+        else
+        {
+            double ph = ms.lfoPhase[lf] + ms.lfoInc[lf] * blockOffset;
+            ph -= std::floor (ph);
+            src[mod::lfo1 + lf] = mod::shapeValue (ms.shape[lf], (float) ph, ms.held[lf], ms.next[lf]);
+        }
+    }
+    for (int m = 0; m < mod::numMacros; ++m) src[mod::macro1 + m] = ms.macro[m];
+    src[mod::modWheel] = ms.modWheel;
+    src[mod::aftertouch] = ms.aftertouch;
+    src[mod::velocity] = velocity;
+    ms.route (src, offsets);
 }
 
 void LeadVoice::renderGrains (float* l, float* r, int n, const SourceData& src, double ratio, const double* detuneRatios,

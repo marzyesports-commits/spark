@@ -35,7 +35,8 @@ public:
 
 private:
     void startGlide();
-    void render (float* l, float* r, int n);
+    void render (float* l, float* r, int n, int blockOffset);
+    void computeModulation (int blockOffset, int n, float (&offsets)[mod::numDests]);
     // oscillator A from a sound: grains or straight playback (unison copies are detuned playheads)
     void renderGrains (float* l, float* r, int n, const SourceData&, double ratio, const double* detuneRatios,
                        const float* gl, const float* gr, int voices, float position, float grainSec, float spray);
@@ -66,6 +67,10 @@ private:
     double samplesToNextGrain = 0.0;
     double playPos[maxUnison] {};   // sample playheads
     double noteSeconds = 0.0;       // for the table scan
+    // per-voice LFOs (when an LFO is set to Retrigger), and the volume being modulated
+    double lfoVoicePhase[mod::numLfos] {};
+    float lfoHeld[mod::numLfos] {}, lfoNext[mod::numLfos] {};
+    float volumeNow = -1.0f;
     juce::AudioBuffer<float> scratch;
 };
 } // namespace spark

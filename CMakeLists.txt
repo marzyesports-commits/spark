@@ -57,13 +57,15 @@ set(SPARK_SHARED_SOURCES
     Source/Instrument/FxHost.cpp
     Source/Instrument/SourceData.cpp
     Source/Instrument/FactorySounds.cpp
-    Source/Instrument/Shapeshift.cpp)
+    Source/Instrument/Shapeshift.cpp
+    Source/Instrument/Modulation.cpp
+    Source/Instrument/ModHost.cpp
+    Source/Instrument/ModCards.cpp)
 
 # Spark (the sound-design instrument)
 set(SPARK_COMMON_SOURCES
     ${SPARK_SHARED_SOURCES}
-    Source/Instrument/InstrumentPresets.cpp
-    Source/Instrument/Modulation.cpp)
+    Source/Instrument/InstrumentPresets.cpp)
 
 # OBSDN (the lead synth with its riff writer)
 set(OBSDN_SOURCES
@@ -125,7 +127,7 @@ spark_configure(Spark)
 target_link_libraries(Spark PRIVATE SparkSounds)
 
 # ---------- OBSDN (lead synth + riff writer, jade theme) ----------
-set(OBSDN_VERSION 0.3.0)
+set(OBSDN_VERSION 0.4.0)
 juce_add_plugin(OBSDN
     VERSION ${OBSDN_VERSION}
     COMPANY_NAME "Spark Audio"

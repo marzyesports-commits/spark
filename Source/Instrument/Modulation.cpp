@@ -1,4 +1,5 @@
 #include "Modulation.h"
+#include "Common/SparkLookAndFeel.h"
 
 namespace spark::mod
 {
@@ -10,7 +11,12 @@ const juce::StringArray& sourceNames()
 
 const juce::StringArray& destNames()
 {
+#if SPARK_THEME_OBSDN
+    // OBSDN's facets sit in the same slots: Pitch, Wave, Detune, Bite, Tone, Drive, Vibrato, Space, Resonance, Volume
+    static const juce::StringArray n { "Pitch", "Wave", "Detune", "Bite", "Tone", "Drive", "Vibrato", "Space", "Resonance", "Volume" };
+#else
     static const juce::StringArray n { "Pitch", "Position", "Grain", "Morph", "Tone", "Drive", "Motion", "Space", "Resonance", "Volume" };
+#endif
     return n;
 }
 

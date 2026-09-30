@@ -218,7 +218,7 @@ void Header::resized()
     redoButton.setBounds (presetArea.getX() - 12 - 40, b.getCentreY() - 20, 40, 40);
     undoButton.setBounds (redoButton.getX() - 8 - 40, b.getCentreY() - 20, 40, 40);
     const int n = juce::jmax (1, tabs.size());
-    const int width = n > 3 ? 264 : 222;
+    const int width = n > 4 ? 292 : (n > 3 ? 264 : 222);
     kindArea = juce::Rectangle<int> (width, 40).withCentre ({ 0, b.getCentreY() });
     kindArea.setX (settings.getX() - 12 - kindArea.getWidth());
     // the last tab (FX) is narrower; the others share the rest

@@ -70,6 +70,7 @@ namespace
         };
 
         FxRack::addParameters (layout);
+        mod::addParameters (layout);
 
         // oscillators
         add (std::make_unique<juce::AudioParameterInt> (juce::ParameterID { "unison", 1 }, "Unison", 1, LeadVoice::maxUnison, 5,
@@ -216,6 +217,7 @@ LeadProcessor::LeadProcessor()
     : SparkProcessorBase (BusesProperties().withOutput ("Output", juce::AudioChannelSet::stereo(), true),
                           leadFacets(), addLeadParameters, makeLeadPresets(), "lead"),
       FxHost (static_cast<SparkProcessorBase&> (*this)),
+      ModHost (static_cast<SparkProcessorBase&> (*this), static_cast<FxHost&> (*this)),
       synth (*this)
 {
     for (int i = 0; i < numFacets; ++i)
@@ -245,6 +247,7 @@ LeadProcessor::LeadProcessor()
     params.riffSwing = raw ("riffSwing");  params.riffOctave = raw ("riffOctave");
     params.riffFollow = raw ("riffFollow"); params.riffLatch = raw ("riffLatch");
     rack.attach (apvts);
+    attachModulation (apvts);
 
     for (int i = 0; i < 8; ++i)
         synth.addVoice (new LeadVoice (*this));
@@ -433,6 +436,7 @@ std::vector<juce::RangedAudioParameter*> LeadProcessor::getRandomisableExtras() 
         out.push_back (apvts.getParameter ("grainSpray"));
     }
     if (params.subLevel->load() > 0.01f) out.push_back (apvts.getParameter ("subLevel"));
+    addModExtras (out);
     if (params.noiseLevel->load() > 0.01f) out.push_back (apvts.getParameter ("noiseLevel"));
     return out;
 }
@@ -549,11 +553,13 @@ void LeadProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBu
     }
     riffWasOn = riffOn;
 
+    updateModulation (midi, bpm, ppq, playing, currentSampleRate);
     synth.renderNextBlock (buffer, midi, 0, n);
 
     const int numCh = buffer.getNumChannels();
     if (numCh == 2)
-        rack.process (buffer, bpm, ppq, playing, params.facet[space]->load());
+        rack.process (buffer, bpm, ppq, playing, juce::jlimit (0.0f, 1.0f, params.facet[space]->load() + liveMod[mod::space].load()));
+    advanceLfos (n);
 
     levelSmooth.setTargetValue (juce::Decibels::decibelsToGain (params.level->load()));
     for (int i = 0; i < n; ++i)
@@ -646,6 +652,18 @@ void LeadProcessor::readExtraState (const juce::ValueTree& extra)
         }
     }
 }
+int LeadProcessor::destForFacet (int facet)
+{
+    static const int map[] { mod::leadWave, mod::leadDetune, mod::tone, mod::leadBite, mod::drive, mod::leadVibrato, -1, mod::space };
+    return juce::isPositiveAndBelow (facet, numFacets) ? map[facet] : -1;
+}
+
+float LeadProcessor::getFacetModulation (int facet) const
+{
+    const int d = destForFacet (facet);
+    return d >= 0 ? liveMod[(size_t) d].load() : 0.0f;
+}
+
 // =====================================================================================
 SourceData::Ptr LeadProcessor::getSource() const
 {

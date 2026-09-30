@@ -6,6 +6,7 @@
 #include "Common/Envelope.h"
 #include "Instrument/FxHost.h"
 #include "Instrument/SourceData.h"
+#include "Instrument/ModHost.h"
 #include "Riff.h"
 
 namespace spark
@@ -34,6 +35,7 @@ private:
 // delayed vibrato, scoops into notes, fall-offs, glide. The riff writer (Riff.h) writes the lines.
 class LeadProcessor : public SparkProcessorBase,
                       public FxHost,
+                      public ModHost,
                       private juce::Timer
 {
 public:
@@ -109,6 +111,8 @@ public:
     // ---- SparkProcessorBase
     std::vector<juce::RangedAudioParameter*> getRandomisableExtras() const override;
     void getCoreShape (std::vector<float>& out, int n) override;
+    float getFacetModulation (int facet) const override;
+    static int destForFacet (int facet);   // the mod destination behind a facet (-1: Glide can't be modulated)
     bool keepsValueOnPresetLoad (const juce::String& paramId) const override { return paramId.startsWith ("riff"); }
 
     // ---- AudioProcessor

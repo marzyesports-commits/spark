@@ -133,6 +133,98 @@ int main (int argc, char** argv)
     outDir.createDirectory();
     const double sr = 48000.0;
 
+    // Gallery: every page at 2x, in a state that shows what it does
+    if (argc > 2 && juce::String (argv[2]) == "gallery")
+    {
+        LeadProcessor p;
+        p.setRateAndBufferSizeDetails (sr, 256);
+        p.prepareToPlay (sr, 256);
+        std::unique_ptr<juce::AudioProcessorEditor> ed (p.createEditor());
+        auto* le = dynamic_cast<LeadEditor*> (ed.get());
+        ed->setSize (1120, 720);
+        auto shoot = [&] (const juce::String& name, juce::Rectangle<int> area = {})
+        {
+            pump (300);
+            if (area.isEmpty()) area = ed->getLocalBounds();
+            auto img = ed->createComponentSnapshot (area, true, 2.0f);
+            auto f = outDir.getChildFile (name + ".png");
+            f.deleteFile();
+            juce::FileOutputStream os (f);
+            juce::PNGImageFormat().writeImageToStream (img, os);
+        };
+        juce::AudioBuffer<float> buf (2, 256);
+        auto run = [&] (int blocks, bool note)
+        {
+            for (int i = 0; i < blocks; ++i)
+            {
+                juce::MidiBuffer m;
+                if (note && i == 0) m.addEvent (juce::MidiMessage::noteOn (1, 57, 0.9f), 0);
+                p.processBlock (buf, m);
+            }
+        };
+        // a lived-in state: a few variations in the lineage, routings, a riff playing
+        for (int k = 0; k < 5; ++k) p.spark();
+        for (int i = 0; i < p.getNumFactoryPresets(); ++i) if (p.getPreset (i).name == "Jade Supersaw") p.loadPreset (i);
+        for (int k = 0; k < 3; ++k) p.spark();
+        p.assignModulation (mod::lfo1, mod::tone, 0.3f);
+        p.assignModulation (mod::lfo2, mod::leadWave, 0.25f);
+        p.assignModulation (mod::macro1, mod::drive, 0.4f);
+        p.assignModulation (mod::modWheel, mod::leadVibrato, 0.5f);
+        setReal (p, mod::lfoParam (1, "Shape"), (float) mod::triangle);
+        setReal (p, mod::lfoParam (0, "Sync"), 1.0f);
+        setReal (p, mod::lfoParam (0, "Div"), 5.0f);
+        setReal (p, mod::macroParam (0), 0.55f);
+        setReal (p, mod::macroParam (1), 0.3f);
+        setReal (p, "riffOn", 1.0f);
+        p.riffPreview = true;
+        run (120, false);
+
+        le->showPage (0);                               shoot ("01-lead");
+        le->showPage (1);                               shoot ("02-synth");
+        le->showPage (2);                               shoot ("03-mod");
+        le->showPage (LeadEditor::riffPage_); run (60, false); shoot ("04-riff");
+        le->showPage (LeadEditor::fxPage_);
+        setReal (p, "fxChorusOn", 1.0f); setReal (p, "fxDelayOn", 1.0f);
+        shoot ("05-fx");
+        // sound design: oscillator A playing a sound, three ways
+        le->showPage (0);
+        p.loadFactorySound ("vox_ah"); p.setOscMode (LeadProcessor::grain); shoot ("06-sound-grain");
+        p.loadFactorySound ("wt_formant"); p.setOscMode (LeadProcessor::table); shoot ("07-sound-table");
+        p.loadFactorySound ("key_kalimba"); p.setOscMode (LeadProcessor::sample); shoot ("08-sound-sample");
+        p.clearSource();
+        // the preset browser
+        for (int i = 0; i < p.getNumFactoryPresets(); ++i) if (p.getPreset (i).name == "Vox Lead") p.loadPreset (i);
+        if (auto* browser = [&] { std::function<PresetBrowser* (juce::Component*)> f = [&] (juce::Component* c) -> PresetBrowser*
+                                  { if (auto* b = dynamic_cast<PresetBrowser*> (c)) return b; for (auto* ch : c->getChildren()) if (auto* r = f (ch)) return r; return nullptr; };
+                                  return f (ed.get()); }())
+        {
+            browser->setVisible (true); browser->toFront (false); browser->refresh (true);
+            shoot ("09-presets");
+            browser->setVisible (false);
+        }
+        // strike: the ring throwing lightning
+        for (int i = 0; i < p.getNumFactoryPresets(); ++i) if (p.getPreset (i).name == "Jade Supersaw") p.loadPreset (i);
+        std::function<juce::Button* (juce::Component*)> findStrike = [&] (juce::Component* c) -> juce::Button*
+        {
+            if (auto* b = dynamic_cast<juce::Button*> (c); b != nullptr && b->getName() == "Spark") return b;
+            for (auto* child : c->getChildren()) if (auto* found = findStrike (child)) return found;
+            return nullptr;
+        };
+        pump (600);
+        if (auto* strike = findStrike (ed.get()))
+        {
+            strike->triggerClick();
+            for (int i = 0; i < 4; ++i) juce::MessageManager::getInstance()->runDispatchLoopUntil (15);
+            auto img = ed->createComponentSnapshot (ed->getLocalBounds(), true, 2.0f);
+            auto f = outDir.getChildFile ("10-strike.png");
+            f.deleteFile();
+            juce::FileOutputStream os (f);
+            juce::PNGImageFormat().writeImageToStream (img, os);
+        }
+        p.riffPreview = false;
+        return 0;
+    }
+
     // App icon: the gem on black, from the same drawing code as the plugin
     if (argc > 2 && juce::String (argv[2]) == "icon")
     {
@@ -606,6 +698,65 @@ int main (int argc, char** argv)
         check (p.getOscMode() == LeadProcessor::waves, "a Waves preset goes back to the built-in shapes");
     }
 
+    // ------------------------------------------------------------------ modulation
+    std::cout << "OBSDN: modulation" << std::endl;
+    {
+        LeadProcessor p;
+        p.prepareToPlay (sr, 256);
+        setReal (p, "fxReverbOn", 0.0f);
+        setReal (p, "fxDelayOn", 0.0f);
+        // an LFO on volume: tremolo you can measure
+        setReal (p, mod::lfoParam (0, "Rate"), 0.0f);
+        p.apvts.getParameter (mod::lfoParam (0, "Rate"))->setValueNotifyingHost (0.55f);   // ~9 Hz
+        const int slot = p.assignModulation (mod::lfo1, mod::volume, -0.8f);
+        auto out = render (p, sr, { { 0.0, juce::MidiMessage::noteOn (1, 69, 0.85f) }, { 1.4, juce::MidiMessage::noteOff (1, 69) } }, 1.5);
+        float lo = 1e9f, hi = 0.0f;
+        for (int w = (int) (0.3 * sr); w + 1200 < (int) (1.3 * sr); w += 600)
+        {
+            const float rms = out.getRMSLevel (0, w, 1200);
+            lo = juce::jmin (lo, rms); hi = juce::jmax (hi, rms);
+        }
+        check (slot >= 0 && hi > lo * 2.5f, "an LFO on Volume makes a tremolo (" + juce::String (juce::Decibels::gainToDecibels (hi / juce::jmax (1e-6f, lo)), 1) + " dB swing)");
+        p.clearModulation (slot);
+
+        // the ring shows it: LFO 1 on Tone moves the Tone facet's marker
+        p.assignModulation (mod::lfo1, mod::tone, 0.3f);
+        float seen = 0.0f;
+        juce::AudioBuffer<float> buf (2, 256);
+        juce::MidiBuffer none;
+        for (int i = 0; i < 200; ++i) { p.processBlock (buf, none); seen = juce::jmax (seen, std::abs (p.getFacetModulation (LeadProcessor::tone))); }
+        check (seen > 0.1f, "the Tone facet shows its live modulation on the ring");
+        check (LeadProcessor::destForFacet (LeadProcessor::glide) < 0 && LeadProcessor::destForFacet (LeadProcessor::wave) == mod::leadWave,
+               "every facet but Glide can be a modulation target");
+
+        // a macro on Wave sweeps the oscillator
+        p.assignModulation (mod::macro1, mod::leadWave, 0.8f);
+        check (mod::destNames()[mod::leadWave] == "Wave" && mod::destNames()[mod::leadVibrato] == "Vibrato", "the matrix names OBSDN's own destinations");
+
+        // routings save with the project, and Strike rolls their amounts
+        juce::MemoryBlock st;
+        p.getStateInformation (st);
+        LeadProcessor q;
+        q.setStateInformation (st.getData(), (int) st.getSize());
+        pump (200);
+        int routed = 0;
+        for (int s2 = 0; s2 < mod::numSlots; ++s2) if (juce::roundToInt (q.modParams.src[s2]->load()) != mod::none) ++routed;
+        check (routed == 2, "modulation routings reopen with the project");
+        bool rollsMod = false;
+        for (auto* prm : p.getRandomisableExtras()) if (prm->getParameterID().startsWith ("mod")) rollsMod = true;
+        check (rollsMod, "Strike also rolls modulation amounts (lock the matrix to keep them)");
+
+        // CPU with everything moving
+        setReal (p, "unison", 7.0f);
+        setReal (p, "voiceMode", 0.0f);
+        std::vector<Ev> chord;
+        for (int n2 : { 60, 64, 67, 71 }) { chord.push_back ({ 0.0, juce::MidiMessage::noteOn (1, n2, 0.8f) }); chord.push_back ({ 4.5, juce::MidiMessage::noteOff (1, n2) }); }
+        const auto t0 = juce::Time::getMillisecondCounterHiRes();
+        render (p, sr, chord, 5.0);
+        const double load = (juce::Time::getMillisecondCounterHiRes() - t0) / 5000.0 * 100.0;
+        check (load < 30.0, "a 4-note 7-voice chord with 3 routings uses " + juce::String (load, 1) + "% of one core");
+    }
+
     // ------------------------------------------------------------------ UI
     std::cout << "OBSDN: pages" << std::endl;
     {
@@ -613,8 +764,15 @@ int main (int argc, char** argv)
         p.prepareToPlay (sr, 256);
         std::unique_ptr<juce::AudioProcessorEditor> ed (p.createEditor());
         auto* le = dynamic_cast<LeadEditor*> (ed.get());
-        const char* names[] { "lead", "synth", "riff", "fx" };
-        for (int page = 0; page < 4; ++page)
+        // a few routings so the MOD page and the ring have something to show
+        p.assignModulation (mod::lfo1, mod::tone, 0.3f);
+        p.assignModulation (mod::lfo2, mod::leadWave, 0.25f);
+        p.assignModulation (mod::macro1, mod::drive, 0.4f);
+        juce::AudioBuffer<float> warm (2, 256);
+        juce::MidiBuffer none;
+        for (int i = 0; i < 40; ++i) p.processBlock (warm, none);
+        const char* names[] { "lead", "synth", "mod", "riff", "fx" };
+        for (int page = 0; page < 5; ++page)
         {
             le->showPage (page);
             snapshot (ed.get(), outDir.getChildFile (juce::String ("page-") + names[page] + ".png"));
@@ -655,7 +813,7 @@ int main (int argc, char** argv)
         }
         setReal (p, "riffOn", 1.0f);
         p.riffPreview = true;
-        le->showPage (2);
+        le->showPage (LeadEditor::riffPage_);
         // run audio so the playhead moves
         juce::AudioBuffer<float> buf (2, 256);
         juce::MidiBuffer midi;
