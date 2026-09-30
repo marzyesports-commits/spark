@@ -1,7 +1,7 @@
 #pragma once
 
 #include "Common/Components.h"
-#include "InstrumentProcessor.h"
+#include "FxHost.h"
 
 namespace spark
 {
@@ -26,7 +26,7 @@ class ModuleCard : public juce::Component,
                    private juce::ChangeListener
 {
 public:
-    ModuleCard (InstrumentProcessor&, const FxRack::ModuleInfo&);
+    ModuleCard (FxHost&, const FxRack::ModuleInfo&);
     ~ModuleCard() override;
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -37,7 +37,8 @@ private:
     void refresh();
     bool isOn() const;
 
-    InstrumentProcessor& processor;
+    FxHost& host;
+    SparkProcessorBase& processor;
     FxRack::ModuleInfo info;
     PowerSwitch onButton;
     PillButton lockButton { {}, PillButton::Style::lockToggle, Icon::unlock };
@@ -49,7 +50,7 @@ private:
 class OutputCard : public juce::Component
 {
 public:
-    explicit OutputCard (InstrumentProcessor&);
+    explicit OutputCard (FxHost&);
     void paint (juce::Graphics&) override;
     void resized() override;
 
@@ -62,7 +63,7 @@ class ChainStrip : public juce::Component,
                    public juce::SettableTooltipClient
 {
 public:
-    explicit ChainStrip (InstrumentProcessor&);
+    explicit ChainStrip (FxHost&);
     void paint (juce::Graphics&) override;
     void mouseUp (const juce::MouseEvent&) override;
     void mouseMove (const juce::MouseEvent&) override;
@@ -70,7 +71,8 @@ public:
 
 private:
     std::vector<juce::Rectangle<float>> pillBounds() const;
-    InstrumentProcessor& processor;
+    FxHost& host;
+    SparkProcessorBase& processor;
     int hovered = -1;
 };
 
@@ -79,7 +81,7 @@ class FxPage : public juce::Component,
                private juce::ChangeListener
 {
 public:
-    explicit FxPage (InstrumentProcessor&);
+    explicit FxPage (FxHost&);
     ~FxPage() override;
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -88,7 +90,8 @@ private:
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
     void showChainMenu();
 
-    InstrumentProcessor& processor;
+    FxHost& host;
+    SparkProcessorBase& processor;
     juce::OwnedArray<ModuleCard> cards;
     OutputCard output;
     ChainStrip chain;

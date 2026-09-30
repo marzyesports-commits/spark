@@ -172,7 +172,7 @@ void PillButton::paintButton (juce::Graphics& g, bool highlighted, bool down)
 }
 
 // =====================================================================================
-Header::Header (SparkProcessorBase& p, bool isFx) : processor (p), fx (isFx)
+Header::Header (SparkProcessorBase& p, const EditorStyle& style) : processor (p), badge (style.badge)
 {
     for (auto* b : { &prev, &next, &settings })
         addAndMakeVisible (b);
@@ -182,18 +182,15 @@ Header::Header (SparkProcessorBase& p, bool isFx) : processor (p), fx (isFx)
     prev.setTooltip ("Previous preset");
     next.setTooltip ("Next preset");
     settings.setTooltip ("Menu");
-    for (auto* b : { &soundTab, &synthTab, &fxTab })
+    for (int i = 0; i < style.tabs.size(); ++i)
     {
+        auto* b = tabs.add (new PillButton (style.tabs[i], PillButton::Style::segment));
         addAndMakeVisible (b);
         b->setFontHeight (11.0f);
-        b->setLetterSpacing (0.14f);
+        b->setLetterSpacing (style.tabs.size() > 3 ? 0.1f : 0.14f);
+        b->setTooltip (style.tabTips[i]);
+        b->onClick = [this, i] { setPage (i); if (onPage) onPage (i); };
     }
-    soundTab.setTooltip ("The sound: source, shape, facets");
-    synthTab.setTooltip ("Filter, voice mode and glide");
-    fxTab.setTooltip ("The effects rack");
-    soundTab.onClick = [this] { setPage (0); if (onPage) onPage (0); };
-    synthTab.onClick = [this] { setPage (1); if (onPage) onPage (1); };
-    fxTab.onClick = [this] { setPage (2); if (onPage) onPage (2); };
     setPage (0);
     for (auto* b : { &undoButton, &redoButton })
         addAndMakeVisible (b);
@@ -220,11 +217,20 @@ void Header::resized()
     settings.setBounds (b.getRight() - 44, b.getCentreY() - 22, 44, 44);
     redoButton.setBounds (presetArea.getX() - 12 - 40, b.getCentreY() - 20, 40, 40);
     undoButton.setBounds (redoButton.getX() - 8 - 40, b.getCentreY() - 20, 40, 40);
-    kindArea = juce::Rectangle<int> (222, 40).withCentre ({ 0, b.getCentreY() });
+    const int n = juce::jmax (1, tabs.size());
+    const int width = n > 3 ? 264 : 222;
+    kindArea = juce::Rectangle<int> (width, 40).withCentre ({ 0, b.getCentreY() });
     kindArea.setX (settings.getX() - 12 - kindArea.getWidth());
-    soundTab.setBounds (kindArea.getX() + 3, kindArea.getY() + 3, 80, 34);
-    synthTab.setBounds (soundTab.getRight(), kindArea.getY() + 3, 80, 34);
-    fxTab.setBounds (synthTab.getRight(), kindArea.getY() + 3, kindArea.getRight() - 3 - synthTab.getRight(), 34);
+    // the last tab (FX) is narrower; the others share the rest
+    const int inner = width - 6, last = n > 1 ? (n > 3 ? 50 : inner - 160) : inner;
+    const int each = n > 1 ? (inner - last) / (n - 1) : inner;
+    int x = kindArea.getX() + 3;
+    for (int i = 0; i < tabs.size(); ++i)
+    {
+        const int w = i == n - 1 ? kindArea.getRight() - 3 - x : each;
+        tabs[i]->setBounds (x, kindArea.getY() + 3, w, 34);
+        x += w;
+    }
 }
 
 void Header::paint (juce::Graphics& g)
@@ -240,13 +246,15 @@ void Header::paint (juce::Graphics& g)
     const float wordWidth = juce::GlyphArrangement::getStringWidth (wordmark, "SPARK");
     g.setFont (wordmark);
     g.drawText ("SPARK", juce::Rectangle<float> (36.0f, 0.0f, wordWidth + 10.0f, b.getHeight()), juce::Justification::centredLeft, false);
-    if (fx)
+    if (badge.isNotEmpty())
     {
-        auto badge = juce::Rectangle<float> (36.0f + wordWidth + 8.0f, b.getCentreY() - 10.0f, 34.0f, 20.0f);
+        const auto badgeFont = fonts::mono (11.0f).withExtraKerningFactor (0.16f);
+        const float w = juce::GlyphArrangement::getStringWidth (badgeFont, badge) + 18.0f;
+        auto pill = juce::Rectangle<float> (36.0f + wordWidth + 8.0f, b.getCentreY() - 10.0f, w, 20.0f);
         g.setColour (gold);
-        g.drawRoundedRectangle (badge, 10.0f, 1.0f);
-        g.setFont (fonts::mono (11.0f).withExtraKerningFactor (0.16f));
-        g.drawText ("FX", badge.translated (1.0f, 0.0f), juce::Justification::centred, false);
+        g.drawRoundedRectangle (pill, 10.0f, 1.0f);
+        g.setFont (badgeFont);
+        g.drawText (badge, pill.translated (1.0f, 0.0f), juce::Justification::centred, false);
     }
 
     // preset pill
@@ -300,9 +308,8 @@ void Header::itemDragMove (const SourceDetails& d)
 {
     int tab = -1;
     const auto p = d.localPosition.toInt();
-    if (soundTab.getBounds().contains (p)) tab = 0;
-    else if (synthTab.getBounds().contains (p)) tab = 1;
-    else if (fxTab.getBounds().contains (p)) tab = 2;
+    for (int i = 0; i < tabs.size(); ++i)
+        if (tabs[i]->getBounds().contains (p)) tab = i;
     if (tab != springTab)
     {
         springTab = tab;
@@ -322,9 +329,8 @@ void Header::timerCallback()
 
 void Header::setPage (int page)
 {
-    soundTab.setToggleState (page == 0, juce::dontSendNotification);
-    synthTab.setToggleState (page == 1, juce::dontSendNotification);
-    fxTab.setToggleState (page == 2, juce::dontSendNotification);
+    for (int i = 0; i < tabs.size(); ++i)
+        tabs[i]->setToggleState (page == i, juce::dontSendNotification);
 }
 
 void Header::mouseMove (const juce::MouseEvent& e)
@@ -1902,10 +1908,11 @@ void SparkEditorBase::Content::paint (juce::Graphics& g)
     g.fillAll (colours::bg);
 }
 
-SparkEditorBase::SparkEditorBase (SparkProcessorBase& p, bool isFx)
+SparkEditorBase::SparkEditorBase (SparkProcessorBase& p, const EditorStyle& editorStyle)
     : juce::AudioProcessorEditor (p),
       sparkProcessor (p),
-      header (p, isFx),
+      style (editorStyle),
+      header (p, editorStyle),
       core (p),
       mutate (p.mutateParam(), "MUTATE", "Mutate: how many facets move on each Spark"),
       chaos (p.chaosParam(), "CHAOS", "Chaos: how far they move"),
@@ -2008,9 +2015,13 @@ void SparkEditorBase::showSettingsMenu (juce::Component& anchor)
         sparkProcessor.sendChangeMessage();
     });
     m.addSeparator();
-    m.addItem ("About Spark", [this]
+    m.addItem ("About " + style.aboutTitle, [this]
     {
-        showMessage ("Spark 1.0", "Drop a sound, hit Spark, keep what you love.\n\n"
+        showMessage (style.aboutTitle
+                    #ifdef JucePlugin_VersionString
+                        + " " + juce::String (JucePlugin_VersionString)
+                    #endif
+                     , style.aboutText + "\n\n"
                                   "Fonts: Syne, Manrope and JetBrains Mono (SIL Open Font License).");
     });
     m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&anchor));

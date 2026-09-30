@@ -1,27 +1,11 @@
 #pragma once
 
 #include "Common/Components.h"
+#include "Common/Cards.h"
 #include "InstrumentProcessor.h"
 
 namespace spark
 {
-// A row of segment buttons bound to a choice parameter (e.g. LP | HP | BP | NOTCH).
-class ChoiceSegments : public juce::Component
-{
-public:
-    ChoiceSegments (juce::RangedAudioParameter&, const juce::StringArray& labels, const juce::StringArray& tooltips);
-    void paint (juce::Graphics&) override;
-    void resized() override;
-    std::function<void()> onChange;
-
-private:
-    void refresh();
-
-    juce::RangedAudioParameter& param;
-    juce::ParameterAttachment attachment;
-    juce::OwnedArray<PillButton> buttons;
-};
-
 // The little handle you drag from a modulation source onto a facet or knob.
 class ModGrip : public juce::Component,
                 public juce::SettableTooltipClient
@@ -36,21 +20,6 @@ public:
 private:
     int source;
     bool hover = false;
-};
-
-// A titled card of knobs on the SYNTH page.
-class SynthCard : public juce::Component
-{
-public:
-    SynthCard (const juce::String& title, const juce::String& blurb);
-    void paint (juce::Graphics&) override;
-    void resized() override;
-
-protected:
-    ArcKnob& addKnob (juce::RangedAudioParameter&, const juce::String& label, const juce::String& tooltip);
-    ChoiceSegments* segments = nullptr;   // optional, shown under the title
-    juce::OwnedArray<ArcKnob> knobs;
-    juce::String title, blurb;
 };
 
 class FilterCard : public SynthCard

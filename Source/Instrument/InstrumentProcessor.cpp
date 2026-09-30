@@ -124,6 +124,7 @@ void SourceData::computePeaks()
 InstrumentProcessor::InstrumentProcessor()
     : SparkProcessorBase (BusesProperties().withOutput ("Output", juce::AudioChannelSet::stereo(), true),
                           instrumentFacets(), addInstrumentParameters, makeInstrumentPresets(), "instrument"),
+      FxHost (static_cast<SparkProcessorBase&> (*this)),
       synth (*this)
 {
     formats.registerBasicFormats();
@@ -754,35 +755,11 @@ void InstrumentProcessor::setMode (Mode m)
     setParam ("mode", (float) m / 2.0f);
 }
 
-bool InstrumentProcessor::isModuleLocked (const juce::String& id) const
-{
-    const juce::ScopedLock sl (lockLock);
-    return lockedModules.contains (id);
-}
-
-void InstrumentProcessor::setModuleLocked (const juce::String& id, bool locked)
-{
-    {
-        const juce::ScopedLock sl (lockLock);
-        if (locked) lockedModules.addIfNotAlreadyThere (id); else lockedModules.removeString (id);
-    }
-    sendChangeMessage();
-}
-
 std::vector<juce::RangedAudioParameter*> InstrumentProcessor::getRandomisableExtras() const
 {
     // Effects that are switched on and not locked. The Space facet is already a facet, so it's skipped here.
     std::vector<juce::RangedAudioParameter*> out;
-    for (const auto& m : FxRack::modules())
-    {
-        if (apvts.getRawParameterValue (m.onParam)->load() < 0.5f || isModuleLocked (m.id))
-            continue;
-        for (const auto& id : m.params)
-            if (id != "space")
-                out.push_back (apvts.getParameter (id));
-    }
-    if (effectsOnlyRoll)
-        return out;
+    addRackExtras (out);
     // layers that are switched in: their levels (and the noise colour)
     if (params.subLevel->load() > 0.01f) out.push_back (apvts.getParameter ("subLevel"));
     if (params.noiseLevel->load() > 0.01f)
@@ -840,47 +817,9 @@ float InstrumentProcessor::getFacetModulation (int facet) const
     return facet >= 0 && facet < numFacetsInstrument ? liveMod[(size_t) facet].load() : 0.0f;
 }
 
-void InstrumentProcessor::sparkEffects()
-{
-    const auto seed = (juce::uint32) juce::Random::getSystemRandom().nextInt();
-    effectsOnlyRoll = true;
-    const auto current = currentExtraValues();
-    effectsOnlyRoll = false;
-    const auto extras = Lineage::rollExtras (current, seed, 1.0f, chaosParam().getValue());
-    lineage.push (currentFacetValues(), seed, extras);
-    applyExtraValues (extras);
-    sendChangeMessage();
-}
-
-void InstrumentProcessor::loadChain (int index)
-{
-    const auto& chains = FxRack::chains();
-    if (! juce::isPositiveAndBelow (index, (int) chains.size()))
-        return;
-    const auto& chain = chains[(size_t) index];
-    for (const auto& m : FxRack::modules())
-    {
-        juce::StringArray ids (m.params);
-        ids.add (m.onParam);
-        for (const auto& id : ids)
-        {
-            if (id == "space") continue;
-            auto* prm = apvts.getParameter (id);
-            const auto it = chain.values.find (id);
-            setParam (id, it != chain.values.end() ? prm->convertTo0to1 (it->second) : prm->getDefaultValue());
-        }
-    }
-    chainName = chain.name;
-    sendChangeMessage();
-}
-
 void InstrumentProcessor::writeExtraState (juce::ValueTree& extra)
 {
-    {
-        const juce::ScopedLock sl (lockLock);
-        extra.setProperty ("fxLocks", lockedModules.joinIntoString (","), nullptr);
-    }
-    extra.setProperty ("chain", chainName, nullptr);
+    writeRackState (extra);
     extra.setProperty ("soundLock", soundLocked.load(), nullptr);
 
     auto s = getSource();
@@ -903,12 +842,7 @@ void InstrumentProcessor::writeExtraState (juce::ValueTree& extra)
 
 void InstrumentProcessor::readExtraState (const juce::ValueTree& extra)
 {
-    {
-        const juce::ScopedLock sl (lockLock);
-        lockedModules = juce::StringArray::fromTokens (extra.getProperty ("fxLocks").toString(), ",", "");
-        lockedModules.removeEmptyStrings();
-    }
-    chainName = extra.getProperty ("chain", "Clean").toString();
+    readRackState (extra);
     // older projects: locked if they carried their own sound
     soundLocked = extra.hasProperty ("soundLock") ? (bool) extra.getProperty ("soundLock")
                                                    : (extra.hasProperty ("sourceAudio") || extra.hasProperty ("sourceFile"));

@@ -29,7 +29,7 @@ void PowerSwitch::paint (juce::Graphics& g)
 }
 
 // =====================================================================================
-ChainStrip::ChainStrip (InstrumentProcessor& p) : processor (p)
+ChainStrip::ChainStrip (FxHost& p) : host (p), processor (p.fxProcessor())
 {
     setMouseCursor (juce::MouseCursor::PointingHandCursor);
     setTooltip ("The signal chain: lit effects are on. Click one to switch it on or off");
@@ -109,20 +109,20 @@ void ChainStrip::mouseUp (const juce::MouseEvent& e)
 }
 
 // =====================================================================================
-ModuleCard::ModuleCard (InstrumentProcessor& p, const FxRack::ModuleInfo& m)
-    : processor (p), info (m),
-      onAttachment (*p.apvts.getParameter (m.onParam), [this] (float) { refresh(); })
+ModuleCard::ModuleCard (FxHost& p, const FxRack::ModuleInfo& m)
+    : host (p), processor (p.fxProcessor()), info (m),
+      onAttachment (*p.fxProcessor().apvts.getParameter (m.onParam), [this] (float) { refresh(); })
 {
     addAndMakeVisible (onButton);
     addAndMakeVisible (lockButton);
     onButton.setTooltip ("Switch " + m.name.toLowerCase() + " on or off");
     lockButton.setTooltip ("Lock: Spark and Breed leave this effect alone");
     onButton.onClick = [this] { onAttachment.setValueAsCompleteGesture (isOn() ? 0.0f : 1.0f); };
-    lockButton.onClick = [this] { processor.setModuleLocked (info.id, ! processor.isModuleLocked (info.id)); };
+    lockButton.onClick = [this] { host.setModuleLocked (info.id, ! host.isModuleLocked (info.id)); };
 
     for (int i = 0; i < m.params.size(); ++i)
     {
-        auto* k = knobs.add (new ArcKnob (*p.apvts.getParameter (m.params[i]), m.labels[i]));
+        auto* k = knobs.add (new ArcKnob (*p.fxProcessor().apvts.getParameter (m.params[i]), m.labels[i]));
         k->isActive = [this] { return isOn(); };
         addAndMakeVisible (k);
     }
@@ -144,7 +144,7 @@ void ModuleCard::refresh()
     onButton.setOn (on);
     for (auto* k : knobs) k->setAlpha (on ? 1.0f : 0.4f);
     if (auto* page = getParentComponent()) page->repaint();   // the chain strip follows
-    const bool locked = processor.isModuleLocked (info.id);
+    const bool locked = host.isModuleLocked (info.id);
     lockButton.setToggleState (locked, juce::dontSendNotification);
     lockButton.setIcon (locked ? Icon::lock : Icon::unlock);
     for (auto* k : knobs) k->repaint();
@@ -198,8 +198,8 @@ void ModuleCard::paint (juce::Graphics& g)
 }
 
 // =====================================================================================
-OutputCard::OutputCard (InstrumentProcessor& p)
-    : level (*p.apvts.getParameter ("level"), "LEVEL")
+OutputCard::OutputCard (FxHost& p)
+    : level (*p.fxProcessor().apvts.getParameter ("level"), "LEVEL")
 {
     addAndMakeVisible (level);
 }
@@ -226,7 +226,7 @@ void OutputCard::paint (juce::Graphics& g)
 }
 
 // =====================================================================================
-FxPage::FxPage (InstrumentProcessor& p) : processor (p), output (p), chain (p)
+FxPage::FxPage (FxHost& p) : host (p), processor (p.fxProcessor()), output (p), chain (p)
 {
     addAndMakeVisible (chain);
     for (const auto& m : FxRack::modules())
@@ -239,7 +239,7 @@ FxPage::FxPage (InstrumentProcessor& p) : processor (p), output (p), chain (p)
     sparkFx.setTooltip ("Roll new settings for the effects that are on (locked ones stay put)");
     allOff.setTooltip ("Switch every effect off (the Space reverb stays)");
     chainButton.onClick = [this] { showChainMenu(); };
-    sparkFx.onClick = [this] { processor.sparkEffects(); };
+    sparkFx.onClick = [this] { host.sparkEffects(); };
     allOff.onClick = [this]
     {
         for (const auto& m : FxRack::modules())
@@ -259,7 +259,7 @@ FxPage::~FxPage() { processor.removeChangeListener (this); }
 
 void FxPage::changeListenerCallback (juce::ChangeBroadcaster*)
 {
-    chainButton.setButtonText ("CHAIN: " + processor.getChainName().toUpperCase());
+    chainButton.setButtonText ("CHAIN: " + host.getChainName().toUpperCase());
     repaint();
 }
 
@@ -270,7 +270,7 @@ void FxPage::showChainMenu()
     const auto& chains = FxRack::chains();
     for (int i = 0; i < (int) chains.size(); ++i)
         m.addItem (chains[(size_t) i].name + "   " + juce::String::fromUTF8 ("\xc2\xb7") + "   " + chains[(size_t) i].hint, true,
-                   chains[(size_t) i].name == processor.getChainName(), [this, i] { processor.loadChain (i); });
+                   chains[(size_t) i].name == host.getChainName(), [this, i] { host.loadChain (i); });
     m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&chainButton));
 }
 

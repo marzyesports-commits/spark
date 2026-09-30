@@ -37,18 +37,28 @@ private:
     float kerning = 0.12f;
 };
 
-// Top bar: logo, preset browser with generation counter, plugin kind, settings.
+// How an editor presents itself: the badge after the SPARK wordmark and the page tabs.
+struct EditorStyle
+{
+    juce::String badge;                                    // e.g. "LEAD", drawn in gold after the wordmark
+    juce::StringArray tabs { "SOUND", "SYNTH", "FX" };
+    juce::StringArray tabTips { "The sound: source, shape, facets", "Filter, voice mode and glide", "The effects rack" };
+    juce::String aboutTitle { "Spark" };
+    juce::String aboutText { "Drop a sound, hit Spark, keep what you love." };
+};
+
+// Top bar: logo, preset browser with generation counter, page tabs, settings.
 class Header : public juce::Component,
                public juce::DragAndDropTarget,
                private juce::ChangeListener,
                private juce::Timer
 {
 public:
-    Header (SparkProcessorBase&, bool isFx);
+    Header (SparkProcessorBase&, const EditorStyle&);
     ~Header() override;
     std::function<void (juce::Component& anchor)> onSettings;
     std::function<void()> onBrowse;
-    std::function<void (int page)> onPage;   // 0 = SOUND, 1 = SYNTH, 2 = FX
+    std::function<void (int page)> onPage;   // index into the style's tabs
     void setPage (int page);
 
     void paint (juce::Graphics&) override;
@@ -70,7 +80,7 @@ private:
     bool presetHover = false;
 
     SparkProcessorBase& processor;
-    bool fx;
+    juce::String badge;
     PillButton prev { {}, PillButton::Style::ghost, Icon::chevronLeft };
     PillButton next { {}, PillButton::Style::ghost, Icon::chevronRight };
     PillButton settings { {}, PillButton::Style::outline, Icon::settings };
@@ -78,9 +88,7 @@ private:
     PillButton redoButton { {}, PillButton::Style::outline, Icon::redo };
     juce::TimedCallback undoRefresh { [this] { refreshUndo(); } };
     void refreshUndo();
-    PillButton soundTab { "SOUND", PillButton::Style::segment };
-    PillButton synthTab { "SYNTH", PillButton::Style::segment };
-    PillButton fxTab { "FX", PillButton::Style::segment };
+    juce::OwnedArray<PillButton> tabs;
     juce::Rectangle<int> presetArea, kindArea;
 };
 
@@ -383,7 +391,7 @@ class SparkEditorBase : public juce::AudioProcessorEditor,
 {
 public:
     bool keyPressed (const juce::KeyPress&) override;   // Cmd/Ctrl+Z undo, Shift+Cmd+Z / Ctrl+Y redo
-    SparkEditorBase (SparkProcessorBase&, bool isFx);
+    SparkEditorBase (SparkProcessorBase&, const EditorStyle& = {});
     ~SparkEditorBase() override;
 
     void paint (juce::Graphics&) override;
@@ -409,6 +417,7 @@ protected:
     SparkProcessorBase& sparkProcessor;
 
 private:
+    EditorStyle style;
     struct Content : public juce::Component
     {
         void paint (juce::Graphics&) override;

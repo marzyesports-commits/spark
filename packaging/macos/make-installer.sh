@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Builds Spark-<version>-macOS.pkg (and a .zip of the raw plugins) from a finished build.
+# Builds <Product>-<version>-macOS.pkg (and a .zip of the raw plugins) from a finished build.
+# PRODUCT=Spark (default) or PRODUCT=SparkLead.
 #
 # Unsigned by default (ad-hoc signatures). To produce a signed + notarised installer set:
 #   APP_SIGN_IDENTITY        e.g. "Developer ID Application: Your Name (TEAMID)"
@@ -13,12 +14,16 @@ BUILD_DIR="${BUILD_DIR:-build}"
 CONFIG="${CONFIG:-Release}"
 OUT_DIR="${OUT_DIR:-dist}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
+PRODUCT="${PRODUCT:-Spark}"
+PRODUCT_ID="$(echo "$PRODUCT" | tr '[:upper:]' '[:lower:]')"
+TEMPLATES="$HERE"
+[[ -d "$HERE/$PRODUCT_ID" ]] && TEMPLATES="$HERE/$PRODUCT_ID"
 
 STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
 mkdir -p "$OUT_DIR" "$STAGE/pkgs" "$STAGE/resources"
 
-I="$BUILD_DIR/Spark_artefacts/$CONFIG"
+I="$BUILD_DIR/${PRODUCT}_artefacts/$CONFIG"
 
 sign_bundle() {
     local bundle="$1"
@@ -51,19 +56,19 @@ make_component() {
         i=$((i + 1))
     done
     pkgbuild --root "$root" --component-plist "$STAGE/$id.plist" \
-             --identifier "com.sparkaudio.spark.$id" --version "$VERSION" \
+             --identifier "com.sparkaudio.$PRODUCT_ID.$id" --version "$VERSION" \
              --install-location / "$STAGE/pkgs/$id.pkg"
 }
 
-make_component vst3 "Library/Audio/Plug-Ins/VST3" "$I/VST3/Spark.vst3"
-make_component au   "Library/Audio/Plug-Ins/Components" "$I/AU/Spark.component"
-make_component apps "Applications" "$I/Standalone/Spark.app"
+make_component vst3 "Library/Audio/Plug-Ins/VST3" "$I/VST3/$PRODUCT.vst3"
+make_component au   "Library/Audio/Plug-Ins/Components" "$I/AU/$PRODUCT.component"
+make_component apps "Applications" "$I/Standalone/$PRODUCT.app"
 
-sed "s/@VERSION@/$VERSION/g" "$HERE/welcome.html" > "$STAGE/resources/welcome.html"
-cp "$HERE/conclusion.html" "$STAGE/resources/conclusion.html"
-sed "s/@VERSION@/$VERSION/g" "$HERE/distribution.xml" > "$STAGE/distribution.xml"
+sed "s/@VERSION@/$VERSION/g" "$TEMPLATES/welcome.html" > "$STAGE/resources/welcome.html"
+cp "$TEMPLATES/conclusion.html" "$STAGE/resources/conclusion.html"
+sed "s/@VERSION@/$VERSION/g" "$TEMPLATES/distribution.xml" > "$STAGE/distribution.xml"
 
-PKG="$OUT_DIR/Spark-$VERSION-macOS.pkg"
+PKG="$OUT_DIR/$PRODUCT-$VERSION-macOS.pkg"
 if [[ -n "${INSTALLER_SIGN_IDENTITY:-}" ]]; then
     productbuild --distribution "$STAGE/distribution.xml" --package-path "$STAGE/pkgs" \
                  --resources "$STAGE/resources" --sign "$INSTALLER_SIGN_IDENTITY" "$PKG"
@@ -79,13 +84,13 @@ if [[ -n "${NOTARY_APPLE_ID:-}" && -n "${INSTALLER_SIGN_IDENTITY:-}" ]]; then
 fi
 
 # Plain zip for people who prefer to drag plugins in themselves
-ZIPROOT="$STAGE/Spark-$VERSION-macOS"
+ZIPROOT="$STAGE/$PRODUCT-$VERSION-macOS"
 mkdir -p "$ZIPROOT/VST3" "$ZIPROOT/AU" "$ZIPROOT/Apps"
 ditto "$STAGE/root-vst3/Library/Audio/Plug-Ins/VST3" "$ZIPROOT/VST3"
 ditto "$STAGE/root-au/Library/Audio/Plug-Ins/Components" "$ZIPROOT/AU"
 ditto "$STAGE/root-apps/Applications" "$ZIPROOT/Apps"
-(cd "$STAGE" && ditto -c -k --keepParent "Spark-$VERSION-macOS" "Spark-$VERSION-macOS-plugins.zip")
-mv "$STAGE/Spark-$VERSION-macOS-plugins.zip" "$OUT_DIR/"
+(cd "$STAGE" && ditto -c -k --keepParent "$PRODUCT-$VERSION-macOS" "$PRODUCT-$VERSION-macOS-plugins.zip")
+mv "$STAGE/$PRODUCT-$VERSION-macOS-plugins.zip" "$OUT_DIR/"
 
 pkgutil --payload-files "$PKG" > "$STAGE/payload.txt" 2>&1 || true
 grep -E "\.(vst3|component|app)$" "$STAGE/payload.txt" || true

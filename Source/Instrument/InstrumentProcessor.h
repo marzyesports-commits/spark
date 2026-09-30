@@ -5,7 +5,7 @@
 #include "Common/SparkProcessorBase.h"
 #include "Common/Wavetable.h"
 #include "Common/Envelope.h"
-#include "FxRack.h"
+#include "FxHost.h"
 #include "Modulation.h"
 
 namespace spark
@@ -61,6 +61,7 @@ private:
 };
 
 class InstrumentProcessor : public SparkProcessorBase,
+                            public FxHost,
                             private juce::Timer
 {
 public:
@@ -103,11 +104,6 @@ protected:
     void applyPresetSound (const Preset&) override;
 
 public:
-    bool isModuleLocked (const juce::String& moduleId) const;
-    void setModuleLocked (const juce::String& moduleId, bool);
-    void sparkEffects();            // roll only the enabled, unlocked effects
-    void loadChain (int index);     // load an effect-chain preset
-    juce::String getChainName() const { return chainName; }
     juce::String currentSoundId() const override;
     void getCoreShape (std::vector<float>& out, int n) override;
 
@@ -210,11 +206,6 @@ private:
     mutable juce::SpinLock sourceLock;
     juce::ReferenceCountedArray<SourceData> retired; // freed on the message thread, never the audio thread
 
-    FxRack rack;
-    juce::StringArray lockedModules;
-    mutable juce::CriticalSection lockLock;
-    juce::String chainName { "Clean" };
-    bool effectsOnlyRoll = false;
     std::atomic<bool> soundLocked { false };
     juce::String lastShapeshift;
     juce::SmoothedValue<float> levelSmooth;

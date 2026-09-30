@@ -44,21 +44,37 @@ file(GLOB SPARK_SOUND_FILES ${CMAKE_CURRENT_SOURCE_DIR}/Resources/Sounds/*.flac 
 juce_add_binary_data(SparkSounds HEADER_NAME SparkSoundData.h NAMESPACE SparkSoundData SOURCES ${SPARK_SOUND_FILES})
 set_target_properties(SparkSounds PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
-set(SPARK_COMMON_SOURCES
+# Shared by every Spark plugin
+set(SPARK_SHARED_SOURCES
     Source/Common/SparkLookAndFeel.cpp
     Source/Common/Lineage.cpp
     Source/Common/SparkProcessorBase.cpp
     Source/Common/Components.cpp
     Source/Common/Wavetable.cpp
     Source/Common/UndoHistory.cpp
-    Source/Instrument/InstrumentPresets.cpp
+    Source/Common/Cards.cpp
     Source/Instrument/FxRack.cpp
+    Source/Instrument/FxHost.cpp)
+
+# Spark (the sound-design instrument)
+set(SPARK_COMMON_SOURCES
+    ${SPARK_SHARED_SOURCES}
+    Source/Instrument/InstrumentPresets.cpp
     Source/Instrument/Modulation.cpp
     Source/Instrument/FactorySounds.cpp
     Source/Instrument/Shapeshift.cpp)
 
+# SparkLead (the lead synth with SparkRiff)
+set(SPARKLEAD_SOURCES
+    ${SPARK_SHARED_SOURCES}
+    Source/Lead/Riff.cpp
+    Source/Lead/LeadPresets.cpp
+    Source/Lead/LeadVoice.cpp
+    Source/Lead/LeadProcessor.cpp
+    Source/Lead/LeadEditor.cpp
+    Source/Instrument/FxPage.cpp)
+
 function(spark_configure target)
-    target_sources(${target} PRIVATE ${SPARK_COMMON_SOURCES})
     target_include_directories(${target} PRIVATE Source)
     target_compile_definitions(${target} PUBLIC
         JUCE_WEB_BROWSER=0
@@ -68,7 +84,6 @@ function(spark_configure target)
     target_link_libraries(${target}
         PRIVATE
             SparkAssets
-            SparkSounds
             juce::juce_audio_utils
             juce::juce_audio_formats
             juce::juce_dsp
@@ -103,8 +118,34 @@ target_sources(Spark PRIVATE
     Source/Instrument/InstrumentEditor.cpp
     Source/Instrument/FxPage.cpp
     Source/Instrument/SynthPage.cpp
-    Source/Instrument/SparkVoice.cpp)
+    Source/Instrument/SparkVoice.cpp
+    ${SPARK_COMMON_SOURCES})
 spark_configure(Spark)
+target_link_libraries(Spark PRIVATE SparkSounds)
+
+# ---------- SparkLead (lead synth + SparkRiff) ----------
+set(SPARKLEAD_VERSION 0.1.0)
+juce_add_plugin(SparkLead
+    VERSION ${SPARKLEAD_VERSION}
+    COMPANY_NAME "Spark Audio"
+    BUNDLE_ID com.sparkaudio.sparklead
+    PLUGIN_MANUFACTURER_CODE Sprk
+    PLUGIN_CODE SpLd
+    FORMATS ${SPARK_FORMATS}
+    PRODUCT_NAME "SparkLead"
+    IS_SYNTH TRUE
+    NEEDS_MIDI_INPUT TRUE
+    NEEDS_MIDI_OUTPUT FALSE
+    IS_MIDI_EFFECT FALSE
+    EDITOR_WANTS_KEYBOARD_FOCUS FALSE
+    COPY_PLUGIN_AFTER_BUILD FALSE
+    VST3_CATEGORIES Instrument Synth
+    AU_MAIN_TYPE kAudioUnitType_MusicDevice
+    ICON_BIG Resources/Icon.png
+    HARDENED_RUNTIME_ENABLED ${SPARK_HARDENED_RUNTIME}
+    MICROPHONE_PERMISSION_ENABLED FALSE)
+target_sources(SparkLead PRIVATE ${SPARKLEAD_SOURCES})
+spark_configure(SparkLead)
 
 # ---------- Offline tests (not shipped) ----------
 option(SPARK_BUILD_TESTS "Build the offline render tests" OFF)
@@ -122,6 +163,15 @@ if(SPARK_BUILD_TESTS)
     target_compile_definitions(SparkTests PRIVATE
         JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 SPARK_TESTS=1 JUCE_MODAL_LOOPS_PERMITTED=1)
     target_link_libraries(SparkTests PRIVATE SparkAssets SparkSounds
+        juce::juce_audio_utils juce::juce_audio_formats juce::juce_dsp
+        juce::juce_recommended_config_flags)
+
+    juce_add_console_app(SparkLeadTests PRODUCT_NAME "SparkLeadTests")
+    target_sources(SparkLeadTests PRIVATE Tests/SparkLeadTests.cpp ${SPARKLEAD_SOURCES})
+    target_include_directories(SparkLeadTests PRIVATE Source)
+    target_compile_definitions(SparkLeadTests PRIVATE
+        JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 SPARK_TESTS=1 JUCE_MODAL_LOOPS_PERMITTED=1)
+    target_link_libraries(SparkLeadTests PRIVATE SparkAssets
         juce::juce_audio_utils juce::juce_audio_formats juce::juce_dsp
         juce::juce_recommended_config_flags)
 endif()

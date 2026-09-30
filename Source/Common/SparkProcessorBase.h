@@ -145,6 +145,8 @@ protected:
     virtual void writeExtraState (juce::ValueTree&) {}
     virtual void readExtraState (const juce::ValueTree&) {}
     virtual void migrateParameters (juce::ValueTree&) {}
+    // Parameters that belong to the project rather than the sound (e.g. SparkLead's riff settings): presets leave them alone
+    virtual bool keepsValueOnPresetLoad (const juce::String& /*paramId*/) const { return false; }
     virtual void applyPresetSound (const Preset&) {}          // after a preset's parameters are set
     virtual juce::String currentSoundId() const { return {}; } // saved with user presets   // rename/convert parameters from older versions before loading
     void setParam (const juce::String& id, float normalised);

@@ -279,7 +279,7 @@ void SparkProcessorBase::loadPreset (int index)
     for (auto* param : getParameters())
     {
         auto* ranged = dynamic_cast<juce::RangedAudioParameter*> (param);
-        if (ranged == nullptr || untouched.contains (ranged->getParameterID())
+        if (ranged == nullptr || untouched.contains (ranged->getParameterID()) || keepsValueOnPresetLoad (ranged->getParameterID())
             || std::find (facetParams.begin(), facetParams.end(), ranged) != facetParams.end())
             continue;
         const auto it = p.extras.find (ranged->getParameterID());
@@ -313,7 +313,7 @@ void SparkProcessorBase::loadRandomPreset (const juce::String& category)
 juce::File SparkProcessorBase::getUserPresetFolder() const
 {
     return juce::File::getSpecialLocation (juce::File::userDocumentsDirectory)
-        .getChildFile ("Spark").getChildFile ("Presets").getChildFile (kind == "fx" ? "Spark FX" : "Spark");
+        .getChildFile ("Spark").getChildFile ("Presets").getChildFile (kind == "fx" ? "Spark FX" : (kind == "lead" ? "SparkLead" : "Spark"));
 }
 
 void SparkProcessorBase::rescanUserPresets()

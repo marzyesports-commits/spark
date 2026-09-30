@@ -728,7 +728,7 @@ bool ShapeEditor::keyPressed (const juce::KeyPress& k)
 
 // =====================================================================================
 InstrumentEditor::InstrumentEditor (InstrumentProcessor& p)
-    : SparkEditorBase (p, false), processor (p), source (p), shape (p), shapeEditor (p), synthPage (p, [this] (int src, int dest) { handleModDrop (src, dest); }), fxPage (p)
+    : SparkEditorBase (p), processor (p), source (p), shape (p), shapeEditor (p), synthPage (p, [this] (int src, int dest) { handleModDrop (src, dest); }), fxPage (p)
 {
     auto col = leftColumn();
     source.setBounds (col.removeFromTop (252));
