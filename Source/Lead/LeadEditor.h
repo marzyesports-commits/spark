@@ -151,12 +151,16 @@ private:
     juce::Rectangle<float> gridArea() const;
     int gridTicks() const;   // click grid: 16ths, or 8th-note triplets for Drill
     float xForTick (double tick) const;
-    float yForDegree (int degree) const;
-    bool cellAt (juce::Point<float>, int& tick, int& degree) const;
+    float yForNote (int midiNote) const;
+    float rowHeight() const;
+    bool inKey (int midiNote) const;
+    bool cellAt (juce::Point<float>, int& tick, int& degree) const;   // false on out-of-key rows: they're locked
 
     LeadProcessor& processor;
     riff::Riff riff;
-    int lo = -2, hi = 12, key = 9, scale = 1, octave = 0;
+    int loNote = 55, hiNote = 81, key = 9, scale = 1, octave = 0;   // the range the roll covers
+    std::vector<int> rows;   // the notes shown, low to high: every semitone, or only the scale's when folded
+    bool folded = false;
     float playhead = -1.0f;
     int hoverTick = -1, hoverDegree = 0;
 };
@@ -200,6 +204,41 @@ private:
     std::unique_ptr<juce::FileChooser> chooser;
 };
 
+// The key table: the 12 notes with the key's scale lit and its root solid. Click a note to make it the key.
+// The piano roll below only lets you write the lit notes.
+class KeyTable : public juce::Component,
+                 public juce::SettableTooltipClient,
+                 private juce::Timer
+{
+public:
+    explicit KeyTable (LeadProcessor&);
+    void paint (juce::Graphics&) override;
+    void mouseMove (const juce::MouseEvent&) override;
+    void mouseExit (const juce::MouseEvent&) override { hovered = -1; repaint(); }
+    void mouseUp (const juce::MouseEvent&) override;
+
+private:
+    void timerCallback() override;
+    juce::Rectangle<float> cell (int pitchClass) const;
+    int cellAt (juce::Point<float>) const;
+    LeadProcessor& processor;
+    juce::ParameterAttachment keyAttachment;
+    int shownKey = -1, shownScale = -1, hovered = -1;
+};
+
+// The riff's finer settings, folded away behind MORE.
+class RiffMorePanel : public juce::Component
+{
+public:
+    explicit RiffMorePanel (LeadProcessor&);
+    void paint (juce::Graphics&) override;
+    void resized() override;
+
+private:
+    ChoiceBox bars, follow, latch;
+    ValueBox density, range, gate, swing, octave;
+};
+
 class RiffPage : public juce::Component,
                  private juce::ChangeListener,
                  private juce::Timer
@@ -224,8 +263,11 @@ private:
     PillButton rhythm { "RHYTHM", PillButton::Style::outline };
     PillButton answer { "ANSWER", PillButton::Style::outline };
     PillButton playButton { "PLAY", PillButton::Style::goldOutline };
-    ChoiceBox key, scale, style, bars, follow, latch;
-    ValueBox density, range, gate, swing, octave;
+    KeyTable keyTable;
+    PillButton fold { "FOLD", PillButton::Style::lockToggle, Icon::lock };
+    ChoiceBox scale, style;
+    PillButton more { "MORE", PillButton::Style::outline, Icon::chevronDown };
+    RiffMorePanel morePanel;
     RiffRoll roll;
     RiffHistory history;
     MidiDragTile dragTile;

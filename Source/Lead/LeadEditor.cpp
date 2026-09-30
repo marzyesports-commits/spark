@@ -511,24 +511,33 @@ void RiffRoll::refresh()
     key = juce::roundToInt (processor.params.riffKey->load());
     scale = juce::roundToInt (processor.params.riffScale->load());
     octave = juce::roundToInt (processor.params.riffOctave->load());
-    const int size = (int) riff::scaleSteps (scale).size();
-    lo = -2;
-    hi = size + size / 2 + 2;
+    const auto& steps = riff::scaleSteps (scale);
+    const int size = (int) steps.size();
+    const int root = riff::rootNote (key, octave);
+    // at least a little below the root to an octave and a half above, and every note of the riff
+    int loDeg = -2, hiDeg = size + size / 2 + 2;
     for (const auto& n : riff.notes)
     {
-        lo = juce::jmin (lo, n.degree - 1);
-        hi = juce::jmax (hi, n.degree + 1);
+        loDeg = juce::jmin (loDeg, n.degree - 1);
+        hiDeg = juce::jmax (hiDeg, n.degree + 1);
     }
+    loNote = riff::degreeToNote (loDeg, root, steps);
+    hiNote = riff::degreeToNote (hiDeg, root, steps);
+    folded = processor.riffFoldToScale.load();
+    rows.clear();
+    for (int n = loNote; n <= hiNote; ++n)
+        if (! folded || inKey (n))
+            rows.push_back (n);
     repaint();
 }
 
 void RiffRoll::timerCallback()
 {
-    // follow the key/scale/octave boxes, and move the playhead only when it moved
+    // follow the key table, scale and octave, and move the playhead only when it moved
     const int k = juce::roundToInt (processor.params.riffKey->load());
     const int s = juce::roundToInt (processor.params.riffScale->load());
     const int o = juce::roundToInt (processor.params.riffOctave->load());
-    if (k != key || s != scale || o != octave)
+    if (k != key || s != scale || o != octave || processor.riffFoldToScale.load() != folded)
         refresh();
     const float ph = processor.getRiffPlayhead();
     if (std::abs (ph - playhead) > 0.05f)
@@ -554,11 +563,24 @@ float RiffRoll::xForTick (double tick) const
     return a.getX() + a.getWidth() * (float) (tick / juce::jmax (1, riff.lengthTicks()));
 }
 
-float RiffRoll::yForDegree (int degree) const
+float RiffRoll::rowHeight() const
+{
+    return gridArea().getHeight() / (float) juce::jmax ((size_t) 1, rows.size());
+}
+
+float RiffRoll::yForNote (int midiNote) const
 {
     const auto a = gridArea();
-    const float rowH = a.getHeight() / (float) (hi - lo + 1);
-    return a.getBottom() - (float) (degree - lo + 1) * rowH;
+    const auto it = std::lower_bound (rows.begin(), rows.end(), midiNote);
+    const int index = (int) (it - rows.begin());
+    return a.getBottom() - (float) (index + 1) * rowHeight();
+}
+
+bool RiffRoll::inKey (int midiNote) const
+{
+    const auto& steps = riff::scaleSteps (scale);
+    const int root = riff::rootNote (key, octave);
+    return riff::degreeToNote (riff::noteToDegree (midiNote, root, steps), root, steps) == midiNote;
 }
 
 bool RiffRoll::cellAt (juce::Point<float> pos, int& tick, int& degree) const
@@ -566,8 +588,13 @@ bool RiffRoll::cellAt (juce::Point<float> pos, int& tick, int& degree) const
     const auto a = gridArea();
     if (! a.contains (pos))
         return false;
-    const float rowH = a.getHeight() / (float) (hi - lo + 1);
-    degree = lo + (int) ((a.getBottom() - pos.y) / rowH);
+    const int index = (int) ((a.getBottom() - pos.y) / rowHeight());
+    if (! juce::isPositiveAndBelow (index, (int) rows.size()))
+        return false;
+    const int note = rows[(size_t) index];
+    if (! inKey (note))
+        return false;   // outside the key: locked
+    degree = riff::noteToDegree (note, riff::rootNote (key, octave), riff::scaleSteps (scale));
     const int grid = gridTicks();
     tick = (int) ((pos.x - a.getX()) / a.getWidth() * (float) riff.lengthTicks());
     // a click on an existing note hits that note; otherwise snap to the grid
@@ -585,6 +612,7 @@ void RiffRoll::mouseMove (const juce::MouseEvent& e)
 {
     int t = -1, d = 0;
     if (! cellAt (e.position, t, d)) t = -1;
+    setMouseCursor (t >= 0 ? juce::MouseCursor::PointingHandCursor : juce::MouseCursor::NormalCursor);
     if (t != hoverTick || d != hoverDegree)
     {
         hoverTick = t;
@@ -611,26 +639,41 @@ void RiffRoll::paint (juce::Graphics& g)
 
     const auto a = gridArea();
     const auto& steps = riff::scaleSteps (scale);
-    const int size = (int) steps.size();
     const int root = riff::rootNote (key, octave);
-    const float rowH = a.getHeight() / (float) (hi - lo + 1);
+    const float rowH = rowHeight();
 
-    // rows: roots shaded, note names on the left
-    g.setFont (fonts::mono (9.0f));
-    for (int d = lo; d <= hi; ++d)
+    // rows: every semitone (out-of-key rows shaded and locked), or folded to just the scale's notes
+    for (const int n : rows)
     {
-        const float y = yForDegree (d);
-        const bool isRoot = ((d % size) + size) % size == 0;
-        if (isRoot)
+        const float y = yForNote (n);
+        const bool open = inKey (n);
+        const bool isRoot = ((n - root) % 12 + 12) % 12 == 0;
+        auto row = juce::Rectangle<float> (a.getX(), y, a.getWidth(), rowH);
+        if (! open)
         {
-            g.setColour (raised);
-            g.fillRect (a.getX(), y, a.getWidth(), rowH);
+            // locked: darker than the card, with a fine hatch
+            g.setColour (bg);
+            g.fillRect (row.reduced (0.0f, 0.5f));
+            g.saveState();
+            g.reduceClipRegion (row.toNearestInt());
+            g.saveState();
+            g.reduceClipRegion (row.toNearestInt());
+            g.setColour (faint);
+            for (float hx = row.getX() - row.getHeight(); hx < row.getRight(); hx += 9.0f)
+                g.drawLine (hx, row.getBottom(), hx + row.getHeight(), row.getY(), 0.6f);
+            g.restoreState();
+            g.restoreState();
         }
-        if (rowH >= 9.0f || isRoot)
+        else
         {
-            g.setColour (isRoot ? text2 : ember);
-            g.drawText (noteName (riff::degreeToNote (d, root, steps)), juce::Rectangle<float> (b.getX() + 8.0f, y, 38.0f, rowH),
-                        juce::Justification::centredLeft, false);
+            g.setColour (isRoot ? gold.withAlpha (0.14f) : raised);
+            g.fillRect (row.reduced (0.0f, 0.5f));
+        }
+        if (open && (rowH >= 7.0f || isRoot))
+        {
+            g.setColour (isRoot ? gold : text2);
+            g.setFont (fonts::mono (juce::jmin (9.0f, rowH + 1.0f)));
+            g.drawText (noteName (n), juce::Rectangle<float> (b.getX() + 8.0f, y, 38.0f, rowH), juce::Justification::centredLeft, false);
         }
     }
     // columns: beats and bars
@@ -647,11 +690,12 @@ void RiffRoll::paint (juce::Graphics& g)
         g.drawText (juce::String (bar + 1), juce::Rectangle<float> (xForTick (bar * riff::ticksPerBar) + 4.0f, b.getY() + 6.0f, 20.0f, 12.0f),
                     juce::Justification::centredLeft, false);
 
-    // hover cell
+    // hover cell (only on open rows)
     if (hoverTick >= 0)
     {
-        g.setColour (gold.withAlpha (0.14f));
-        g.fillRoundedRectangle (juce::Rectangle<float> (xForTick (hoverTick), yForDegree (hoverDegree), xForTick (hoverTick + gridTicks()) - xForTick (hoverTick), rowH).reduced (1.0f), 3.0f);
+        const int n = riff::degreeToNote (hoverDegree, root, steps);
+        g.setColour (gold.withAlpha (0.18f));
+        g.fillRoundedRectangle (juce::Rectangle<float> (xForTick (hoverTick), yForNote (n), xForTick (hoverTick + gridTicks()) - xForTick (hoverTick), rowH).reduced (1.0f), 3.0f);
     }
 
     // notes, with slides drawn as a curve into the next note
@@ -659,20 +703,21 @@ void RiffRoll::paint (juce::Graphics& g)
     for (size_t i = 0; i < riff.notes.size(); ++i)
     {
         const auto& n = riff.notes[i];
+        const int midi = riff::degreeToNote (n.degree, root, steps);
         const float x0 = xForTick (n.start), x1 = xForTick (n.start + juce::jmin (riff::soundingTicks (n, gate), n.span));
-        const auto r = juce::Rectangle<float> (x0, yForDegree (n.degree), juce::jmax (4.0f, x1 - x0), rowH).reduced (1.0f, juce::jmin (2.0f, rowH * 0.15f));
+        const auto r = juce::Rectangle<float> (x0, yForNote (midi), juce::jmax (4.0f, x1 - x0), rowH).reduced (1.0f, juce::jmin (1.5f, rowH * 0.12f));
         const bool lit = playhead >= (float) n.start && playhead < (float) (n.start + n.span);
         g.setColour ((lit ? goldHi : gold).withAlpha (0.35f + 0.65f * n.velocity));
         g.fillRoundedRectangle (r, 3.0f);
         if (n.slide && i + 1 < riff.notes.size())
         {
             const auto& m = riff.notes[i + 1];
-            juce::Path s;
-            s.startNewSubPath (r.getRight() - 2.0f, r.getCentreY());
-            const float xe = xForTick (m.start) + 2.0f, ye = yForDegree (m.degree) + rowH * 0.5f;
-            s.cubicTo (r.getRight() + 6.0f, r.getCentreY(), xe - 6.0f, ye, xe, ye);
+            juce::Path sl;
+            sl.startNewSubPath (r.getRight() - 2.0f, r.getCentreY());
+            const float xe = xForTick (m.start) + 2.0f, ye = yForNote (riff::degreeToNote (m.degree, root, steps)) + rowH * 0.5f;
+            sl.cubicTo (r.getRight() + 6.0f, r.getCentreY(), xe - 6.0f, ye, xe, ye);
             g.setColour (goldHi.withAlpha (0.8f));
-            g.strokePath (s, juce::PathStrokeType (1.5f));
+            g.strokePath (sl, juce::PathStrokeType (1.5f));
         }
     }
 
@@ -686,7 +731,7 @@ void RiffRoll::paint (juce::Graphics& g)
     {
         g.setColour (muted);
         g.setFont (fonts::body (13.0f));
-        g.drawText ("Click to add notes, or press GENERATE", a, juce::Justification::centred, false);
+        g.drawText ("Click a lit row to add notes, or press GENERATE", a, juce::Justification::centred, false);
     }
 }
 
@@ -808,13 +853,85 @@ void MidiDragTile::mouseUp (const juce::MouseEvent& e)
 }
 
 // =====================================================================================
-RiffPage::RiffPage (LeadProcessor& p)
-    : processor (p),
-      onAttachment (param (p, "riffOn"), [this] (float) { refresh(); }),
-      key (param (p, "riffKey"), "KEY", "The riff's key"),
-      scale (param (p, "riffScale"), "SCALE", "The riff's scale. Changing it re-voices the riff without losing the tune"),
-      style (param (p, "riffStyle"), "STYLE", "What kind of lines GENERATE writes"),
-      bars (param (p, "riffBars"), "LENGTH", "Riff length in bars"),
+KeyTable::KeyTable (LeadProcessor& p)
+    : processor (p), keyAttachment (param (p, "riffKey"), [this] (float) { repaint(); })
+{
+    setTooltip ("The key: lit notes are in the scale, the solid one is the root. Click a note to make it the key. "
+                "The piano roll only lets you write lit notes");
+    startTimerHz (8);
+}
+
+void KeyTable::timerCallback()
+{
+    const int k = juce::roundToInt (processor.params.riffKey->load());
+    const int sc = juce::roundToInt (processor.params.riffScale->load());
+    if (k != shownKey || sc != shownScale)
+        repaint();
+}
+
+juce::Rectangle<float> KeyTable::cell (int pc) const
+{
+    const float gap = 4.0f;
+    const float w = ((float) getWidth() - gap * 11.0f) / 12.0f;
+    return { (float) pc * (w + gap), 18.0f, w, (float) getHeight() - 18.0f };
+}
+
+int KeyTable::cellAt (juce::Point<float> pos) const
+{
+    for (int pc = 0; pc < 12; ++pc)
+        if (cell (pc).contains (pos)) return pc;
+    return -1;
+}
+
+void KeyTable::mouseMove (const juce::MouseEvent& e)
+{
+    const int h = cellAt (e.position);
+    setMouseCursor (h >= 0 ? juce::MouseCursor::PointingHandCursor : juce::MouseCursor::NormalCursor);
+    if (h != hovered) { hovered = h; repaint(); }
+}
+
+void KeyTable::mouseUp (const juce::MouseEvent& e)
+{
+    const int pc = cellAt (e.position);
+    if (pc >= 0 && e.mouseWasClicked())
+        keyAttachment.setValueAsCompleteGesture ((float) pc);
+}
+
+void KeyTable::paint (juce::Graphics& g)
+{
+    using namespace colours;
+    shownKey = juce::roundToInt (processor.params.riffKey->load());
+    shownScale = juce::roundToInt (processor.params.riffScale->load());
+    const auto& steps = riff::scaleSteps (shownScale);
+    g.setColour (muted);
+    g.setFont (fonts::body (10.0f, true).withExtraKerningFactor (0.12f));
+    g.drawText ("KEY  " + juce::String::fromUTF8 ("\xc2\xb7") + "  " + riff::keyNames()[shownKey] + " " + riff::scaleNames()[shownScale].toUpperCase(),
+                juce::Rectangle<float> (2.0f, 0.0f, (float) getWidth(), 14.0f), juce::Justification::centredLeft, false);
+    for (int pc = 0; pc < 12; ++pc)
+    {
+        const int interval = (pc - shownKey + 12) % 12;
+        const bool inScale = std::find (steps.begin(), steps.end(), interval) != steps.end();
+        const bool isRoot = interval == 0;
+        const bool sharp = riff::keyNames()[pc].contains ("#");
+        auto r = cell (pc);
+        if (isRoot)
+            g.setColour (hovered == pc ? goldHi : gold);
+        else if (inScale)
+            g.setColour (hovered == pc ? selected.brighter (0.3f) : selected);
+        else
+            g.setColour (hovered == pc ? raised : (sharp ? bg : panel));
+        g.fillRoundedRectangle (r, 6.0f);
+        g.setColour (isRoot ? gold : (inScale ? gold.withAlpha (0.8f) : line));
+        g.drawRoundedRectangle (r.reduced (0.5f), 6.0f, 1.0f);
+        g.setColour (isRoot ? bg : (inScale ? goldHi : ember));
+        g.setFont (fonts::mono (11.0f));
+        g.drawText (riff::keyNames()[pc], r, juce::Justification::centred, false);
+    }
+}
+
+// =====================================================================================
+RiffMorePanel::RiffMorePanel (LeadProcessor& p)
+    : bars (param (p, "riffBars"), "LENGTH", "Riff length in bars"),
       follow (param (p, "riffFollow"), "FOLLOW",
               "How held keys move the riff. In key: along the scale, so it follows your chord roots. "
               "Chromatic: transposes exactly. Fixed: any key plays it as written"),
@@ -823,7 +940,42 @@ RiffPage::RiffPage (LeadProcessor& p)
       range (param (p, "riffRange"), "RANGE", "How far the line travels"),
       gate (param (p, "riffGate"), "GATE", "Note length: short and plucky to long and smooth"),
       swing (param (p, "riffSwing"), "SWING", "Pushes off-beat 16ths late for groove"),
-      octave (param (p, "riffOctave"), "OCTAVE", "Plays the riff higher or lower"),
+      octave (param (p, "riffOctave"), "OCTAVE", "Plays the riff higher or lower")
+{
+    for (auto* c : std::initializer_list<juce::Component*> { &bars, &density, &range, &gate, &swing, &octave, &follow, &latch })
+        addAndMakeVisible (c);
+    for (auto* v : { &density, &range, &gate, &swing, &octave })
+        v->framed = true;
+}
+
+void RiffMorePanel::resized()
+{
+    juce::Component* cells[] { &bars, &density, &range, &gate, &swing, &octave, &follow, &latch };
+    const int pad = 14, gap = 8, top = 34;
+    const int w = (getWidth() - 2 * pad - 3 * gap) / 4, h = (getHeight() - top - pad - gap) / 2;
+    for (int i = 0; i < 8; ++i)
+        cells[i]->setBounds (pad + (i % 4) * (w + gap), top + (i / 4) * (h + gap), w, h);
+}
+
+void RiffMorePanel::paint (juce::Graphics& g)
+{
+    using namespace colours;
+    auto b = getLocalBounds().toFloat();
+    g.setColour (bg.withAlpha (0.97f));
+    g.fillRoundedRectangle (b, 12.0f);
+    g.setColour (gold.withAlpha (0.6f));
+    g.drawRoundedRectangle (b.reduced (0.5f), 12.0f, 1.0f);
+    drawSectionLabel (g, "MORE RIFF SETTINGS", { 14.0f, 8.0f, 300.0f, 20.0f });
+}
+
+// =====================================================================================
+RiffPage::RiffPage (LeadProcessor& p)
+    : processor (p),
+      onAttachment (param (p, "riffOn"), [this] (float) { refresh(); }),
+      keyTable (p),
+      scale (param (p, "riffScale"), "SCALE", "The riff's scale. Changing it re-voices the riff without losing the tune"),
+      style (param (p, "riffStyle"), "STYLE", "What kind of lines GENERATE writes"),
+      morePanel (p),
       roll (p), history (p), dragTile (p)
 {
     addAndMakeVisible (onSwitch);
@@ -835,7 +987,7 @@ RiffPage::RiffPage (LeadProcessor& p)
         addAndMakeVisible (b);
         b->setFontHeight (11.0f);
     }
-    generate.setTooltip ("Write a brand new riff in this style");
+    generate.setTooltip ("Write a brand new riff in this style and key");
     mutate.setTooltip ("Keep the rhythm, change some notes");
     rhythm.setTooltip ("Keep the notes in order, try a new rhythm");
     answer.setTooltip ("Make the second half answer the first (call and response)");
@@ -856,11 +1008,27 @@ RiffPage::RiffPage (LeadProcessor& p)
         refresh();
     };
 
-    for (auto* c : std::initializer_list<juce::Component*> { &key, &scale, &style, &bars, &follow, &latch,
-                                                             &density, &range, &gate, &swing, &octave, &roll, &history, &dragTile })
+    fold.setFontHeight (10.0f);
+    fold.setClickingTogglesState (false);
+    fold.setTooltip ("Fold to scale: the piano roll shows only the notes in the key, so every row is one you can write. "
+                     "Off: all 12 notes, with the ones outside the key locked");
+    fold.onClick = [this]
+    {
+        processor.riffFoldToScale = ! processor.riffFoldToScale.load();
+        refresh();
+    };
+    more.setFontHeight (10.0f);
+    more.setTooltip ("Length, density, range, gate, swing, octave, follow and latch");
+    more.onClick = [this]
+    {
+        morePanel.setVisible (! morePanel.isVisible());
+        more.setStyle (morePanel.isVisible() ? PillButton::Style::goldSolid : PillButton::Style::outline);
+        if (morePanel.isVisible()) morePanel.toFront (false);
+    };
+
+    for (auto* c : std::initializer_list<juce::Component*> { &keyTable, &fold, &scale, &style, &more, &roll, &history, &dragTile })
         addAndMakeVisible (c);
-    for (auto* v : { &density, &range, &gate, &swing, &octave })
-        v->framed = true;
+    addChildComponent (morePanel);
 
     processor.addChangeListener (this);
     onAttachment.sendInitialUpdate();
@@ -885,6 +1053,9 @@ void RiffPage::refresh()
     if (! on && processor.riffPreview.load())
         processor.riffPreview = false;
     const bool previewing = processor.riffPreview.load();
+    const bool isFolded = processor.riffFoldToScale.load();
+    fold.setToggleState (isFolded, juce::dontSendNotification);
+    fold.setIcon (isFolded ? Icon::lock : Icon::unlock);
     playButton.setButtonText (previewing ? "STOP" : "PLAY");
     playButton.setStyle (previewing ? PillButton::Style::goldSolid : PillButton::Style::goldOutline);
 
@@ -920,15 +1091,18 @@ void RiffPage::resized()
     dragTile.setBounds (getWidth() - 16 - 120, 14, 120, 32);
     playButton.setBounds (dragTile.getX() - 8 - 84, 14, 84, 32);
 
-    // settings: two columns on the left
-    const int colW = 104, rowH = 44, left = 16, top = 60;
-    juce::Component* cells[] { &key, &scale, &style, &bars, &density, &range, &gate, &swing, &octave, &follow, &latch };
-    for (int i = 0; i < 11; ++i)
-        cells[i]->setBounds (left + (i % 2) * (colW + 8), top + (i / 2) * (rowH + 6), colW, rowH);
+    // the key table and the two choices that matter most, then MORE for the rest
+    const int row = 58, h = 46;
+    more.setBounds (getWidth() - 16 - 92, row + 14, 92, 32);
+    style.setBounds (more.getX() - 10 - 150, row, 150, h);
+    scale.setBounds (style.getX() - 8 - 170, row, 170, h);
+    fold.setBounds (scale.getX() - 16 - 88, row + 14, 88, 32);
+    keyTable.setBounds (16, row, fold.getX() - 16 - 12, h);
 
-    const int rollX = left + 2 * colW + 8 + 16;
-    roll.setBounds (rollX, top, getWidth() - rollX - 16, getHeight() - top - 76);
-    history.setBounds (rollX, roll.getBottom() + 8, getWidth() - rollX - 16, 30);
+    const int top = row + h + 12;
+    roll.setBounds (16, top, getWidth() - 32, getHeight() - top - 46);
+    history.setBounds (16, roll.getBottom() + 8, 460, 30);
+    morePanel.setBounds (getWidth() - 16 - 560, top + 6, 560, 150);
 }
 
 void RiffPage::paint (juce::Graphics& g)
@@ -948,8 +1122,9 @@ void RiffPage::paint (juce::Graphics& g)
 
     g.setColour (muted);
     g.setFont (fonts::body (11.0f));
-    g.drawText (hintShown, juce::Rectangle<float> ((float) roll.getX(), b.getBottom() - 30.0f, (float) roll.getWidth(), 20.0f),
-                juce::Justification::centredLeft, true);
+    g.drawText (hintShown, juce::Rectangle<float> ((float) history.getRight() + 16.0f, (float) history.getY() + 5.0f,
+                                                   (float) (roll.getRight() - history.getRight() - 16), 20.0f),
+                juce::Justification::centredRight, true);
 }
 
 // =====================================================================================

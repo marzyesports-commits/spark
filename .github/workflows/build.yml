@@ -12,7 +12,7 @@ permissions:
 
 env:
   VERSION: 1.5.0        # Spark. A "-dev" version builds and tests but doesn't publish; a version that's already released isn't re-published
-  OBSDN_VERSION: 0.4.0  # OBSDN (published as a pre-release while it's in beta)
+  OBSDN_VERSION: 0.4.1  # OBSDN (published as a pre-release while it's in beta)
 
 jobs:
   macos:

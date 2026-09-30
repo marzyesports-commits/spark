@@ -93,6 +93,7 @@ public:
     void recallRiff (int index);
     juce::File exportRiffMidi() const;   // writes a .mid to a temp folder and returns it
     std::atomic<bool> riffPreview { false };   // PLAY button
+    std::atomic<bool> riffFoldToScale { false };   // the piano roll shows only the scale's notes
     float getRiffPlayhead() const noexcept { return riffPlayhead.load(); }
     juce::String riffName() const;
 

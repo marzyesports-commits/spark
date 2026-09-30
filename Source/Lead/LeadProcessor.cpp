@@ -599,6 +599,7 @@ void LeadProcessor::writeExtraState (juce::ValueTree& extra)
         }
     }
     extra.setProperty ("riff", currentRiff.toString(), nullptr);
+    extra.setProperty ("riffFold", riffFoldToScale.load(), nullptr);
 }
 
 void LeadProcessor::readExtraState (const juce::ValueTree& extra)
@@ -640,6 +641,7 @@ void LeadProcessor::readExtraState (const juce::ValueTree& extra)
     }
     else
         installSource (nullptr);
+    riffFoldToScale = (bool) extra.getProperty ("riffFold", false);
     const auto text = extra.getProperty ("riff").toString();
     syncRiffSettings = true;   // the riff settings arrive after this; don't rewrite the saved riff when they do
     if (text.isNotEmpty())

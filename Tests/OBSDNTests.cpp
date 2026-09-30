@@ -183,6 +183,25 @@ int main (int argc, char** argv)
         le->showPage (1);                               shoot ("02-synth");
         le->showPage (2);                               shoot ("03-mod");
         le->showPage (LeadEditor::riffPage_); run (60, false); shoot ("04-riff");
+        {
+            std::function<juce::Button* (juce::Component*)> findMore = [&] (juce::Component* c) -> juce::Button*
+            {
+                if (auto* b = dynamic_cast<juce::Button*> (c); b != nullptr && b->getButtonText() == "MORE") return b;
+                for (auto* child : c->getChildren()) if (auto* f = findMore (child)) return f;
+                return nullptr;
+            };
+            if (auto* more = findMore (ed.get()))
+            {
+                more->triggerClick(); pump (100); shoot ("04b-riff-more");
+                more->triggerClick(); pump (100);
+            }
+            setReal (p, "riffKey", 2.0f); setReal (p, "riffScale", 6.0f);   // D minor pentatonic: fewer lit rows
+            run (20, false); shoot ("04c-riff-pentatonic");
+            p.riffFoldToScale = true;   // FOLD: only the scale's notes
+            run (20, false); shoot ("04d-riff-folded");
+            p.riffFoldToScale = false;
+            setReal (p, "riffKey", 9.0f); setReal (p, "riffScale", 1.0f);
+        }
         le->showPage (LeadEditor::fxPage_);
         setReal (p, "fxChorusOn", 1.0f); setReal (p, "fxDelayOn", 1.0f);
         shoot ("05-fx");
@@ -488,6 +507,7 @@ int main (int argc, char** argv)
         setReal (p, "riffStyle", (float) riff::drill);
         pump (300);
         p.mutateRiff();
+        p.riffFoldToScale = true;
         const auto saved = p.getRiff();
         juce::MemoryBlock state;
         p.getStateInformation (state);
@@ -496,6 +516,7 @@ int main (int argc, char** argv)
         pump (400);
         check (q.getRiff() == saved, "a project reopens with its exact riff");
         check (juce::roundToInt (q.params.riffStyle->load()) == riff::drill, "a project reopens with its riff settings");
+        check (q.riffFoldToScale.load(), "a project reopens with the piano roll folded to the scale");
 
         // changing a riff setting rewrites the riff from its seed
         const auto beforeStyle = q.getRiff();
